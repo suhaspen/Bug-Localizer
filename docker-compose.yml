@@ -1,0 +1,22 @@
+# Postgres with pgvector preinstalled. Port 5433 (not the default 5432) so this
+# never collides with a Postgres the user already runs locally.
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: bugloc-postgres
+    environment:
+      POSTGRES_USER: bugloc
+      POSTGRES_PASSWORD: bugloc
+      POSTGRES_DB: bugloc
+    ports:
+      - "5433:5432"
+    volumes:
+      - bugloc-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bugloc -d bugloc"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  bugloc-pgdata:

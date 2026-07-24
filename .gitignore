@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Cloned target repos: hundreds of MB, fully reproducible via `make mine`
+.cache/
+
+# Mined dataset + splits: regenerable, and large
+data/
+
+# Downloaded model weights
+.models/
+
+# Local overrides and secrets
+config.local.yaml
+.env
+
+# macOS
+.DS_Store
+
+# NOTE: results/ is deliberately NOT ignored. Eval runs are the evidence
+# behind the numbers in the docs, so they get committed.

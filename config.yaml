@@ -1,0 +1,81 @@
+# Bug Localizer configuration.
+#
+# Every knob that affects a reported number lives here, so a result is always
+# reproducible from (git SHA + this file). Override locally with config.local.yaml
+# (gitignored) or with BUGLOC_* environment variables for secrets.
+
+seed: 42
+
+paths:
+  cache_dir: .cache        # cloned target repos
+  data_dir: data           # examples.jsonl, splits
+  results_dir: results     # eval run outputs
+
+# Target repositories to mine. Chosen for: active Python projects, disciplined
+# commit conventions, and a mix of sizes (flask/requests iterate in seconds,
+# pandas supplies the volume).
+repos:
+  - name: flask
+    url: https://github.com/pallets/flask.git
+    default_branch: main
+  - name: requests
+    url: https://github.com/psf/requests.git
+    default_branch: main
+  - name: pandas
+    url: https://github.com/pandas-dev/pandas.git
+    default_branch: main
+
+mining:
+  # A commit touching more than this many files is a refactor/release/merge,
+  # not a localizable bug fix. Mega-commits are noise, not signal.
+  max_files_per_commit: 10
+  # Drop commits whose fix touches nothing but these — a docs-only or test-only
+  # commit has no source file to localize to.
+  exclude_path_globs:
+    - "docs/**"
+    - "doc/**"
+    - "**/tests/**"
+    - "**/test_*.py"
+    - "**/*_test.py"
+    - "**/conftest.py"
+    - "*.md"
+    - "*.rst"
+    - "*.txt"
+    - "*.cfg"
+    - "*.toml"
+    - "*.ini"
+    - "*.yaml"
+    - "*.yml"
+  # Only these extensions can count as gold files (Python-only project scope).
+  source_extensions: [".py"]
+  # Commit-message patterns that mark a commit as a bug fix.
+  fix_patterns:
+    - "(?i)^BUG[:\\s]"
+    - "(?i)\\bfix(e[sd])?\\b"
+    - "(?i)\\bbug\\b"
+    - "(?i)closes? #\\d+"
+    - "(?i)fixes? #\\d+"
+  skip_merge_commits: true
+  min_gold_files: 1
+
+split:
+  # Temporal, per repo: oldest `dev_fraction` of fix commits by author date is
+  # the dev set (tune here freely); the newest remainder is held-out eval.
+  # Mirrors deployment — you localize tomorrow's bug, not yesterday's.
+  strategy: temporal
+  dev_fraction: 0.7
+
+retrieval:
+  chunk_max_chars: 2000
+  chunk_overlap_chars: 200
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  top_k: 10
+  # Reciprocal Rank Fusion constant; damps the influence of top-ranked outliers.
+  rrf_k: 60
+
+db:
+  # Matches docker-compose.yml. Override with BUGLOC_DB_DSN.
+  dsn: postgresql://bugloc:bugloc@localhost:5433/bugloc
+
+logging:
+  level: INFO
