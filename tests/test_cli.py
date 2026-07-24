@@ -17,7 +17,12 @@ from buglocalizer.cli import app
 REPO_ROOT = Path(__file__).resolve().parents[1]
 runner = CliRunner()
 
-EXPECTED_COMMANDS = ["mine", "dataset-stats", "index", "retrieve", "eval", "config-show"]
+EXPECTED_COMMANDS = ["mine", "dataset-stats", "samples", "index", "retrieve", "eval", "config-show"]
+
+# Commands still stubbed out. `mine` and `dataset-stats` are deliberately absent:
+# they are implemented now, and invoking them here would clone repos and mine
+# real history from a unit test.
+UNIMPLEMENTED = ["index", "retrieve", "eval"]
 
 
 def test_help_lists_every_planned_command():
@@ -39,7 +44,7 @@ def test_config_show_loads_shipped_config():
     assert "flask" in result.stdout
 
 
-@pytest.mark.parametrize("command", ["mine", "dataset-stats", "index", "retrieve", "eval"])
+@pytest.mark.parametrize("command", UNIMPLEMENTED)
 def test_unimplemented_commands_exit_with_milestone_pointer(command):
     result = runner.invoke(app, [command, "--config", str(REPO_ROOT / "config.yaml")])
     assert result.exit_code == 2

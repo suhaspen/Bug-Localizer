@@ -47,7 +47,7 @@ So a single labeled example is assembled like this:
 
 | Piece | Where it comes from |
 | --- | --- |
-| `query_text` — what the bug looked like *before* anyone knew the answer | The commit message and the linked issue's title and body |
+| `query_text` — the description of the bug | The commit message (linked issue numbers are stored; fetching their bodies needs the GitHub API and is deferred — see `docs/01_dataset.md`) |
 | `gold_files` — the correct answer | The non-test source files that the fix commit changed |
 | The corpus to search | The repository **at the parent commit** — the last state of the code that still had the bug |
 | Metadata | Repo name, fix SHA, parent SHA, timestamp |
@@ -73,10 +73,12 @@ fix. This is called avoiding **leakage**, and it is the first thing a sharp
 interviewer will probe. See `docs/glossary.md`.
 
 The same concern shapes the query side: the query text must never quote the diff
-or the fixed code. We build queries only from text that existed *before* the fix
-landed — the issue report — plus the commit message, which is written at fix time
-but describes the *problem*, not the patch. (This is a real, acknowledged
-compromise; `docs/01_dataset.md` treats it honestly once Milestone 1 lands.)
+or the fixed code. Any literal gold file path appearing in a commit message is
+scrubbed before the query is stored. But the message is still written at fix
+time, by someone who already knows the answer, so its vocabulary is subtly
+better-informed than a real bug report's — an acknowledged compromise that makes
+absolute accuracy optimistic while leaving method *comparison* valid.
+`docs/01_dataset.md` treats this honestly.
 
 ---
 
@@ -196,3 +198,48 @@ What exists now:
   of the shipped `config.yaml`, and the CLI surface.
 
 Numbers produced: `16 passed` in 0.26s; `ruff` clean.
+
+### Milestone 1 — History mining → labeled dataset
+
+Built the thing the whole project rests on: a command that turns git history into
+labeled bug-localization examples. Full treatment in `docs/01_dataset.md`.
+
+**7,466 labeled examples from 50,490 commits, mined in ~13 seconds.**
+
+| repo | total | dev | held-out | avg gold files |
+| --- | ---: | ---: | ---: | ---: |
+| flask | 303 | 212 | 91 | 1.38 |
+| requests | 398 | 278 | 120 | 1.23 |
+| pandas | 6,765 | 4,735 | 2,030 | 1.39 |
+| **all** | **7,466** | **5,225** | **2,241** | **1.38** |
+
+77% of examples have exactly one gold file, which means top-1 accuracy is a
+meaningful thing to ask for rather than a lottery.
+
+What the milestone added:
+
+- **Mining** via a single `git log --name-only` subprocess per repo (GitPython's
+  per-commit diff API would be ~38,000 subprocesses on pandas and take tens of
+  minutes; this takes 8 seconds).
+- **Seven filters**, each with a logged count, removing merges, non-fixes,
+  docs/style commits, mega-commits, docs/test-only commits, and — importantly —
+  gold files that don't exist at the parent commit and therefore could never be
+  retrieved.
+- **Query scrubbing**: literal gold paths removed from 47 queries that named the
+  file they fixed.
+- **Temporal split**, per repo, 70/30, deterministic.
+- **`dataset-stats`** with per-repo breakdowns and an explicit warning when a repo
+  is too small to support its own accuracy claim.
+- **`samples`**, which prints full examples for hand-review and deliberately
+  over-samples borderline cases.
+- **66 passing tests**, including one that asserts the buggy code is present at
+  `parent_sha` and the fix is not — the project's central correctness property.
+
+**Two findings worth carrying forward.** First, pandas is **90.6% of the held-out
+set**, so any aggregate number is essentially a pandas number; flask and requests
+contribute 91 and 120 held-out examples, too few to support per-repo claims.
+Second, hand-reviewing sampled labels found four real defects (`setup.py` was the
+gold label for 108 examples; lowercase `docs:` prefixes bypassed the filter;
+squash trailers polluted 357 queries; a leading space defeated every anchored
+pattern). Fixing them removed 240 examples — the dataset got smaller and more
+trustworthy.

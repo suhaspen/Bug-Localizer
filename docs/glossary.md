@@ -159,6 +159,33 @@ typically a refactor, merge, or release. Excluded, because treating all of its
 files as "the bug" would inflate accuracy for free — a wide enough net catches
 anything.
 
+**Mining funnel** — The per-filter tally of how many commits each rule removed,
+in the order the rules ran. Each rejected commit is attributed to the *first*
+rule that caught it, so the counts sum to the total scanned. Publishing the
+funnel is what makes a self-labeled dataset auditable: it shows exactly how
+7,466 examples were selected out of 50,490 commits.
+
+**Borderline example** — An example that only just survived the filters (a very
+short message, a fix keyword appearing only in the body, exactly at the
+mega-commit threshold). Marked rather than dropped, so that manual label review
+can deliberately over-sample the edges — a random sample of a mostly-clean
+dataset shows you mostly-clean examples and teaches you nothing about where the
+labels fail.
+
+**Query scrubbing** — Removing text from the query that would give away the
+answer. Here: deleting literal gold file paths from a commit message that names
+the file it changed. Only full paths are removed, never bare module names, since
+stripping `groupby` from "groupby.apply raises" would delete the bug description
+itself.
+
+**Gold reachability** — The requirement that every gold file actually exists in
+the corpus being searched. A fix that *creates* a file produces a label no
+retriever could ever return, which puts a silent ceiling on accuracy. Checked
+here against the parent commit.
+
+**Blob** — Git's term for the stored contents of a single file version. See
+**blob hash**.
+
 **Blob hash** — Git's content-addressed identifier for a file's contents. Two
 files with identical content have the same blob hash regardless of path or
 commit, which is what lets us embed each distinct file version exactly once

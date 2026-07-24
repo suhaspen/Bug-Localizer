@@ -12,14 +12,18 @@ asked the same question a developer faced on the day the bug was filed.
 We then evaluate retrieval methods — BM25, dense embeddings, hybrid fusion, and
 cross-encoder reranking — on top-1/5/10 file accuracy, MRR, and MAP.
 
-**Status: Milestone 0 (skeleton).** No results yet.
+**Status: Milestone 1.** The dataset exists — **7,466 labeled examples** mined
+from 50,490 commits across flask, requests and pandas in ~13 seconds. No
+retrieval results yet.
 
 ## Quickstart
 
 ```bash
 make setup   # create the venv, install dependencies
 make test    # run the test suite
-make help    # list every command
+make mine    # clone the repos and build data/examples.jsonl
+make stats   # per-repo dataset breakdown
+make samples # print labeled examples for hand-review
 ```
 
 ## Documentation
@@ -29,6 +33,7 @@ The `docs/` folder is written to be read on its own, without the code:
 | Doc | What it covers |
 | --- | --- |
 | [`docs/00_overview.md`](docs/00_overview.md) | The project end to end, and the headline results |
+| [`docs/01_dataset.md`](docs/01_dataset.md) | How git history self-labels the dataset, every filter, and the honest limitations |
 | [`docs/architecture.md`](docs/architecture.md) | Map of the codebase and how data flows through it |
 | [`docs/decisions.md`](docs/decisions.md) | Every non-obvious choice, with the alternatives rejected |
 | [`docs/glossary.md`](docs/glossary.md) | Plain-language definitions of every domain term |

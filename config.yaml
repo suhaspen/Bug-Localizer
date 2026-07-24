@@ -46,6 +46,19 @@ mining:
     - "*.ini"
     - "*.yaml"
     - "*.yml"
+    # Build, packaging, benchmark and dev-tooling code. These are .py files, so
+    # without these globs they become gold labels -- `setup.py` alone was the
+    # answer for 108 examples, and a packaging fix is not a localizable bug in
+    # the product. Found by reviewing sampled examples by hand.
+    - "setup.py"
+    - "versioneer.py"
+    - "_version.py"
+    - "asv_bench/**"
+    - "**/benchmarks/**"
+    - "bench/**"
+    - "scripts/**"
+    - "ci/**"
+    - "web/**"
   # Only these extensions can count as gold files (Python-only project scope).
   source_extensions: [".py"]
   # Commit-message patterns that mark a commit as a bug fix.
@@ -55,8 +68,26 @@ mining:
     - "(?i)\\bbug\\b"
     - "(?i)closes? #\\d+"
     - "(?i)fixes? #\\d+"
+  # Checked BEFORE fix_patterns. Without these, "DOC: fix typo in docstring"
+  # counts as a bug fix and labels a source file that was never at fault --
+  # pandas' commit-prefix convention makes that noise easy to remove.
+  # `Backport PR #...` matters for a different reason: backports duplicate a fix
+  # that we already mined from the original commit.
+  # Note the trailing `[:\s]` rather than `[:/]`: a combined `DOC/BUG:` prefix
+  # really is a bug fix and must survive. Plural and lowercase forms are listed
+  # because pandas has drifted toward conventional-commit style (`docs:`,
+  # `style:`) which the uppercase-only list silently let through.
+  exclude_message_patterns:
+    - "(?i)^(DOCS?|TSTS?|TESTS?|CLN|STY|STYLE|CI|BLD|BUILD|RLS|TYP|TYPING|REF|REFACTOR|ENH|PERF|DEPR?|WEB|BENCH|ASV|CHORE|MAINT|PEP)[:\\s]"
+    - "(?i)^revert\\b"
+    - "(?i)^merge\\b"
+    - "(?i)^backport\\b"
+    - "(?i)^bump\\b"
+    - "(?i)\\btypos?\\b"
   skip_merge_commits: true
   min_gold_files: 1
+  require_gold_in_parent: true
+  scrub_gold_paths_from_query: true
 
 split:
   # Temporal, per repo: oldest `dev_fraction` of fix commits by author date is

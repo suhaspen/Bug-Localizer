@@ -4,9 +4,10 @@
 through the system. This is the doc to read before answering "walk me through
 your code."*
 
-**Status: Milestone 0.** Only the skeleton exists. Modules planned for later
-milestones are listed with the milestone that delivers them, so the intended
-shape of the system is visible from the start.
+**Status: Milestone 1.** Mining and the dataset exist; indexing, retrieval and
+evaluation do not. Modules planned for later milestones are listed with the
+milestone that delivers them, so the intended shape of the system is visible from
+the start.
 
 ---
 
@@ -23,13 +24,20 @@ Bug Localizer/
 │   ├── config.py            # typed config models + loader          [M0]
 │   ├── logging_setup.py     # one place that configures logging     [M0]
 │   ├── cli.py               # the `bugloc` command surface          [M0]
-│   ├── mining/              # git history → labeled examples        [M1]
+│   ├── dataset.py           # Example schema, JSONL io, split, stats [M1]
+│   ├── reporting.py         # stats tables and the sample printer   [M1]
+│   ├── mining/
+│   │   ├── repos.py         # clone/fetch into .cache/              [M1]
+│   │   ├── filters.py       # pure commit-filter logic              [M1]
+│   │   └── miner.py         # git log → Example objects             [M1]
 │   ├── indexing/            # source files → BM25 + pgvector        [M2]
 │   ├── retrieval/           # query → ranked files                  [M2]
 │   └── eval/                # ranked files → metrics                [M3]
 ├── tests/
 │   ├── test_config.py       # config loading, overrides, validation
-│   └── test_cli.py          # command surface smoke tests
+│   ├── test_cli.py          # command surface smoke tests
+│   ├── test_filters.py      # every filter + borderline rule
+│   └── test_miner.py        # end-to-end mining on a real fixture repo
 ├── data/                    # examples.jsonl, splits (gitignored)
 ├── results/                 # eval runs (committed — this is the evidence)
 └── docs/                    # the knowledge base
@@ -53,14 +61,25 @@ config.yaml
 [cli.py]  loads Config, configures logging, dispatches
     │
     ├──▶ bugloc mine                                                    [M1]
-    │      clone/pull repos into .cache/
-    │      walk history → identify fix commits
-    │      apply filters (merge, docs/test-only, mega-commit)
+    │      clone/fetch repos into .cache/
+    │      one `git log --name-only` per repo → CommitInfo list
+    │      classify() funnel: merge, excluded message, not-a-fix,
+    │        mega-commit, no-source-files
+    │      batch-verify gold files exist at parent_sha
+    │      build query_text (strip trailers, scrub gold paths)
+    │      assign temporal split, per repo
     │      → data/examples.jsonl        {query_text, gold_files,
-    │                                    repo, fix_sha, parent_sha, ts}
+    │                                    repo, fix_sha, parent_sha,
+    │                                    authored_at, borderline, split}
+    │      → data/mining_funnel.json    per-filter rejection counts
     │
     ├──▶ bugloc dataset-stats                                           [M1]
-    │      read examples.jsonl → counts, gold-file distribution
+    │      read examples.jsonl + funnel → per-repo tables,
+    │      gold-file distribution, coverage warnings
+    │
+    ├──▶ bugloc samples                                                 [M1]
+    │      print full examples for hand-review of label quality,
+    │      over-sampling borderline cases
     │
     ├──▶ bugloc index                                                   [M2]
     │      for each example: checkout parent_sha
@@ -126,6 +145,63 @@ Each command takes `--config/-c`, so a run can be pinned to a specific settings
 file — needed for sweeping hyperparameters on the dev set without editing the
 committed config in place.
 
+### `mining/filters.py`
+
+The commit-filter rules, written as **pure functions over a `CommitInfo`
+dataclass**. Nothing in this module touches git, the filesystem, or the network,
+which is the point: the rules that decide what the dataset contains can be tested
+against fabricated commits, exhaustively and in milliseconds.
+
+`classify()` runs the funnel and returns a `Decision` carrying either a rejection
+reason or the gold files plus any *borderline* markers. Rejection order is
+meaningful — cheap structural checks (merge, parent count) run before message
+regexes — and each commit is attributed to the first rule that rejected it, so
+the logged counts sum to the total scanned.
+
+`path_matches()` implements glob matching with `**` crossing directory
+boundaries. Neither `fnmatch` (its `*` matches `/`, which would make `*.py` and
+`**/test_*.py` equivalent) nor `PurePath.full_match` (3.13+) was usable.
+
+`CommitInfo.__post_init__` strips the message. That looks fussy until you learn
+several pandas commits are written `" DOC: ..."` with a leading space, which
+makes every `^`-anchored exclusion silently miss.
+
+### `mining/miner.py`
+
+Reads history and builds `Example` objects. Three things worth knowing:
+
+**One subprocess per repo.** A single `git log --name-only` with a custom format
+using `\x01`/`\x1f`/`\x1e` separators — control characters that cannot appear in
+a commit message or path, so multi-line messages parse unambiguously. GitPython's
+`commit.stats` would be one subprocess per commit: ~38,000 on pandas.
+
+**Dates via `%at`, not `%aI`.** flask has a commit with a `+518:00` timezone
+offset that `datetime.fromisoformat` refuses. Epoch seconds always parse.
+
+**Gold reachability is batch-verified.** `paths_present_at()` feeds every
+`(parent_sha, path)` pair to one `git cat-file --batch-check` process and maps
+results back positionally. This enforces that a gold file exists in the corpus
+we index.
+
+### `dataset.py`
+
+The `Example` pydantic model (also `extra="forbid"`), JSONL read/write, the
+temporal split, and the statistics functions. The split sorts on
+`(authored_at, fix_sha)` so it is byte-identical across runs even when two
+commits share a timestamp.
+
+### `reporting.py`
+
+Rich tables for `dataset-stats` and the panel renderer for `samples`. Separate
+from the CLI so the numbers can be computed and tested independently of how they
+are printed. It owns the per-repo coverage warning thresholds — a repo under 30
+held-out examples or 5% of the eval set gets flagged explicitly rather than being
+blended into an aggregate.
+
+`render_samples()` draws borderline examples as a *separate quota* from the
+random sample, because a random draw from a mostly-clean dataset shows you
+mostly-clean examples.
+
 ---
 
 ## Testing strategy
@@ -137,9 +213,25 @@ chasing coverage:
   impossible values, and a test that the committed `config.yaml` actually parses.
   That last one is small but load-bearing: it means a broken config can never be
   committed silently.
-- **CLI** — that the command surface exists and `--help` works.
+- **CLI** — that the command surface exists and `--help` works. Note that `mine`
+  and `dataset-stats` are deliberately *excluded* from the "unimplemented
+  command" test: invoking them from a unit test would clone repositories and mine
+  real history.
+- **Filters** — every rejection reason and every borderline marker, against
+  fabricated `CommitInfo` objects. Highest-value tests in the project so far: a
+  wrong filter doesn't crash, it silently changes what the dataset contains, and
+  every downstream number inherits the error with no visible symptom.
+- **Mining end-to-end** — `tests/test_miner.py` builds a real git repository in a
+  temp directory containing one commit of each shape (root, feature, clean fix,
+  docs-only, `DOC:`-prefixed, mega-commit, a fix that creates its own gold file,
+  and a fix whose message names the file it changed), then mines it and asserts
+  the exact funnel counts. This covers the parts no filter test can: the `git log`
+  parser, the parent-existence check, and query construction.
 
-Coming: filter logic tested against fabricated commits (M1), metric functions
-tested against hand-computed examples (M3). Those two are the highest-value tests
-in the project — a wrong filter silently changes the dataset, and a wrong metric
-silently changes every number we report.
+  The most important test in the file is `test_parent_sha_really_is_the_buggy_state`,
+  which reads the gold file at both SHAs and asserts the bug is present at the
+  parent and the fix is not. That is the project's central correctness property,
+  and it is checked rather than assumed.
+
+Coming: metric functions tested against hand-computed examples (M3) — a wrong
+metric silently changes every number we report.

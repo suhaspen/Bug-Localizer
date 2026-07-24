@@ -16,7 +16,18 @@ from rich.console import Console
 
 from buglocalizer import __version__
 from buglocalizer.config import Config, load_config
+from buglocalizer.dataset import (
+    Example,
+    assign_temporal_split,
+    examples_path,
+    load_funnel,
+    read_jsonl,
+    save_funnel,
+    write_jsonl,
+)
 from buglocalizer.logging_setup import configure_logging
+from buglocalizer.mining import ensure_repo, mine_repo
+from buglocalizer.reporting import render_samples, render_stats
 
 app = typer.Typer(
     name="bugloc",
@@ -60,17 +71,70 @@ def config_show(config: ConfigOpt = Path("config.yaml")) -> None:
 
 
 @app.command()
-def mine(config: ConfigOpt = Path("config.yaml")) -> None:
+def mine(
+    config: ConfigOpt = Path("config.yaml"),
+    repo: Annotated[
+        list[str] | None, typer.Option("--repo", "-r", help="Mine only these repos.")
+    ] = None,
+    no_fetch: Annotated[
+        bool, typer.Option("--no-fetch", help="Skip `git fetch`; mine the cached clone as-is.")
+    ] = False,
+) -> None:
     """Mine fix commits from the target repos into a labeled examples.jsonl."""
-    _load(config)
-    _not_yet("Milestone 1", "history mining")
+    cfg = _load(config)
+    targets = [cfg.repo(name) for name in repo] if repo else cfg.repos
+    if not targets:
+        console.print("[red]no repos configured[/]")
+        raise typer.Exit(code=1)
+
+    all_examples: list[Example] = []
+    funnel: dict[str, dict] = {}
+    for repo_cfg in targets:
+        repo_path = ensure_repo(repo_cfg, cfg.paths.cache_dir, fetch=not no_fetch)
+        examples, counts = mine_repo(repo_cfg, cfg, repo_path)
+        all_examples.extend(examples)
+        funnel[repo_cfg.name] = dict(counts)
+
+    all_examples = assign_temporal_split(all_examples, cfg.split.dev_fraction)
+
+    out = examples_path(cfg.paths.data_dir)
+    write_jsonl(out, all_examples)
+    save_funnel(cfg.paths.data_dir, funnel)
+
+    console.print(
+        f"\n[green]wrote {len(all_examples):,} examples[/] → {out}\n"
+        f"run [bold]bugloc dataset-stats[/] for the breakdown, "
+        f"[bold]bugloc samples[/] to eyeball labels"
+    )
 
 
 @app.command("dataset-stats")
 def dataset_stats(config: ConfigOpt = Path("config.yaml")) -> None:
-    """Print dataset statistics: examples per repo, gold-file distribution."""
-    _load(config)
-    _not_yet("Milestone 1", "dataset statistics")
+    """Print dataset statistics: examples per repo, split sizes, gold-file distribution."""
+    cfg = _load(config)
+    examples = read_jsonl(examples_path(cfg.paths.data_dir))
+    render_stats(console, examples, load_funnel(cfg.paths.data_dir))
+
+
+@app.command()
+def samples(
+    config: ConfigOpt = Path("config.yaml"),
+    n: Annotated[int, typer.Option("-n", help="Random examples to print.")] = 6,
+    borderline: Annotated[
+        int, typer.Option("--borderline", "-b", help="Additional borderline examples.")
+    ] = 2,
+    repo: Annotated[str | None, typer.Option("--repo", "-r", help="Restrict to one repo.")] = None,
+    seed: Annotated[int | None, typer.Option("--seed", help="Sampling seed.")] = None,
+) -> None:
+    """Print full examples (query, gold files, SHAs) for eyeballing label quality."""
+    cfg = _load(config)
+    examples = read_jsonl(examples_path(cfg.paths.data_dir))
+    if repo:
+        examples = [e for e in examples if e.repo == repo]
+        if not examples:
+            console.print(f"[red]no examples for repo {repo!r}[/]")
+            raise typer.Exit(code=1)
+    render_samples(console, examples, n=n, n_borderline=borderline, seed=seed or cfg.seed)
 
 
 @app.command()

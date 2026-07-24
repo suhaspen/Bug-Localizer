@@ -143,3 +143,135 @@ and a commit — then work stops.
 not just a workflow preference: it means each milestone must stand alone as
 something demonstrable and defensible, rather than being a half-finished slice of
 a larger design.
+
+---
+
+## Milestone 1
+
+### D9 — Query text is the commit message only; issue bodies deferred
+
+**Decision.** `query_text` is built from the commit message. Linked issue numbers
+are extracted and stored (72.6% of examples have one), but issue titles and
+bodies are not fetched.
+
+**Alternatives.** Fetch issue text from the GitHub API during mining.
+
+**Why, and this is a deliberate cut rather than an omission.** Fetching issue
+bodies needs the GitHub API: 60 requests/hour unauthenticated, 5,000/hour with a
+token. For 7,466 examples that is either impossible or an hour-long networked
+run, and it breaks the project's offline guarantee — mining, indexing and eval
+are all supposed to run with no network and no API key.
+
+The cost is real and is documented rather than hidden: commit messages are
+written by someone who already knows the answer, so they are subtly easier
+queries than real bug reports, and at a median of 69 characters they are much
+shorter. Absolute accuracy will therefore be optimistic relative to production.
+Method *comparison* — what this project is actually for — is unaffected, since
+every method faces the same query.
+
+Issue numbers are stored specifically so this can be added later as a separate
+hydration step without re-mining.
+
+### D10 — Test files are never gold labels
+
+**Decision.** Test files are excluded from `gold_files` even though a fix commit
+usually edits its test alongside the source.
+
+**Alternatives.** Count every changed file, tests included.
+
+**Why.** The test is *evidence* of the bug, not its location. Including tests
+would make the task easier for the wrong reason: test names and assertions
+restate the bug report almost verbatim, so a retriever could rank
+`tests/test_send.py` first by pure lexical overlap and be scored correct without
+ever finding the defect. We would be measuring "can you find the test that
+describes this bug," which is a different and much easier question.
+
+### D11 — Gold files must exist at the parent commit
+
+**Decision.** Every gold file is checked for existence at `parent_sha`; absent
+ones are removed, and examples with nothing left are dropped.
+
+**Alternatives.** Trust the commit's file list.
+
+**Why.** A fix that *creates* a file leaves a label pointing at something that
+does not exist in the corpus we index, so no retriever could ever return it —
+a silent, permanent ceiling on every accuracy number. Only 2 examples were
+dropped entirely and 24 partially trimmed, so the effect is small, but an
+unreachable label is a correctness bug regardless of frequency, and "how do you
+know your labels are even retrievable?" is a fair interview question with a much
+better answer than "I assumed so."
+
+Implemented as one batched `git cat-file --batch-check` per repo rather than a
+lookup per file, which keeps it effectively free.
+
+### D12 — Mine with `git log` subprocess, not GitPython's diff API
+
+**Decision.** History is read via a single `git log --name-only` subprocess per
+repo with a custom control-character format. GitPython is used only for cloning.
+
+**Alternatives.** GitPython's `commit.stats.files`, which is the obvious API.
+
+**Why.** `commit.stats` shells out once per commit. On pandas that is ~38,000
+subprocesses and takes tens of minutes; one `git log` does the same work in about
+8 seconds. The whole mining run is 13 seconds, which matters more than it sounds
+— a fast miner is one you re-run freely after changing a filter, and this
+milestone was re-mined three times while fixing label defects found by sampling.
+
+Fields are separated with `\x1f`/`\x1e`/`\x01` because those cannot occur in a
+commit message or path, so multi-line messages parse unambiguously.
+
+### D13 — Commit dates read as `%at` (epoch), not `%aI` (ISO-8601)
+
+**Decision.** Parse author dates as unix timestamps in UTC.
+
+**Why.** Found by a crash on real data: flask contains a commit whose timezone
+offset is written `+518:00`, which `datetime.fromisoformat` rejects outright.
+Git will happily store a malformed offset that git itself wrote decades ago. The
+epoch form is always valid, and an absolute instant is what temporal ordering
+actually needs — the local offset is irrelevant to "which bug came first."
+
+### D14 — Build, benchmark and tooling paths are excluded from gold
+
+**Decision.** `setup.py`, `versioneer.py`, `asv_bench/`, `scripts/`, `ci/`, `web/`
+and `**/benchmarks/**` cannot be gold files.
+
+**Alternatives.** Accept any `.py` file outside tests and docs.
+
+**Why.** Found by hand-reviewing sampled examples: `setup.py` alone was the sole
+label for 108 examples, and 295 gold entries in total were build or dev-tooling
+code. A packaging fix is not a localizable bug in the product, and asking a
+retriever to rank `setup.py` for a bug report about DataFrame indexing is asking
+it to learn noise. Removing these cost 240 examples and made the rest
+trustworthy.
+
+Recorded here mainly because of *how* it was found — reviewing labels by hand is
+the only thing that would have caught it, since nothing crashes and every metric
+still computes.
+
+### D15 — Borderline markers instead of stricter filters
+
+**Decision.** Examples that *nearly* got filtered are tagged (`short_query`,
+`weak_fix_signal`, `at_mega_commit_threshold`, …) and kept, rather than dropped.
+`bugloc samples` deliberately over-samples them.
+
+**Alternatives.** Tighten the filters until only unambiguous examples remain.
+
+**Why.** Two reasons. First, review quality: a random sample of a mostly-clean
+dataset shows you mostly-clean examples, which tells you nothing about where the
+labels break down. Sampling the edges is the only way to see what the filter
+boundaries actually admit. Second, honesty about difficulty: dropping every
+short or ambiguous query would inflate accuracy by quietly removing the hard
+cases, which is exactly the kind of silent dataset curation that makes published
+numbers untrustworthy. The markers are stored per example, so results can later
+be broken down by borderline status instead of the dataset being pre-filtered to
+look good.
+
+### D16 — Normalize commit messages inside `CommitInfo`
+
+**Decision.** `CommitInfo.__post_init__` strips the message.
+
+**Why.** A bug, not a preference. Several pandas commits are written with a
+leading space (`" DOC: ..."`), which makes every `^`-anchored exclusion pattern
+miss, so docstring commits were labeled as bug fixes. Normalizing at the
+construction boundary rather than at each call site means no future code path —
+including tests — can reintroduce it.

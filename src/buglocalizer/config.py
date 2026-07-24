@@ -9,6 +9,7 @@ nothing is the easiest way to publish a wrong number.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -41,8 +42,26 @@ class MiningConfig(_Strict):
     exclude_path_globs: list[str] = Field(default_factory=list)
     source_extensions: list[str] = Field(default_factory=lambda: [".py"])
     fix_patterns: list[str] = Field(default_factory=list)
+    exclude_message_patterns: list[str] = Field(default_factory=list)
     skip_merge_commits: bool = True
     min_gold_files: int = Field(default=1, ge=1)
+    # Drop a gold file if it does not exist at the parent commit (a file the fix
+    # *created* can never be retrieved from the buggy state). Without this the
+    # dataset has an unreachable accuracy ceiling.
+    require_gold_in_parent: bool = True
+    # Remove literal gold file paths from the query text. Commit messages
+    # occasionally name the file that was changed, which is direct leakage.
+    scrub_gold_paths_from_query: bool = True
+
+    @field_validator("fix_patterns", "exclude_message_patterns")
+    @classmethod
+    def _patterns_must_compile(cls, v: list[str]) -> list[str]:
+        for pattern in v:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"invalid regex {pattern!r}: {exc}") from exc
+        return v
 
 
 class SplitConfig(_Strict):
