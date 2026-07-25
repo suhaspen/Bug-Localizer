@@ -27,8 +27,20 @@ def configure_logging(level: str = "INFO") -> None:
         datefmt="%H:%M:%S",
         handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
     )
-    # GitPython is chatty at DEBUG and drowns out our own progress lines.
-    logging.getLogger("git").setLevel(logging.WARNING)
+    # Third-party libraries that log at INFO by default and drown out our own
+    # progress lines. huggingface/httpx in particular emit a line per HTTP
+    # request while loading a model, which is dozens of lines per command.
+    for noisy in (
+        "git",
+        "httpx",
+        "httpcore",
+        "urllib3",
+        "filelock",
+        "transformers",
+        "sentence_transformers",
+        "huggingface_hub",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     _CONFIGURED = True
 
 

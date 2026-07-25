@@ -12,18 +12,22 @@ asked the same question a developer faced on the day the bug was filed.
 We then evaluate retrieval methods — BM25, dense embeddings, hybrid fusion, and
 cross-encoder reranking — on top-1/5/10 file accuracy, MRR, and MAP.
 
-**Status: Milestone 1.** The dataset exists — **7,466 labeled examples** mined
-from 50,490 commits across flask, requests and pandas in ~13 seconds. No
-retrieval results yet.
+**Status: Milestone 2.** The dataset exists — **7,445 labeled examples** mined
+from 50,490 commits across flask, requests and pandas in ~13 seconds — and both
+retrievers (BM25 and dense/pgvector) return ranked files. No accuracy numbers
+yet; the eval harness is Milestone 3.
 
 ## Quickstart
 
 ```bash
-make setup   # create the venv, install dependencies
-make test    # run the test suite
-make mine    # clone the repos and build data/examples.jsonl
-make stats   # per-repo dataset breakdown
-make samples # print labeled examples for hand-review
+make setup      # create the venv, install core dependencies
+make setup-ml   # add sentence-transformers + psycopg (needed from here on)
+make test       # run the test suite
+make mine       # clone the repos and build data/examples.jsonl
+make stats      # per-repo dataset breakdown
+make db-up      # Postgres 17 + pgvector
+make index      # embed each example's parent commit
+make retrieve   # rank files for one example, BM25 vs dense
 ```
 
 ## Documentation
@@ -34,6 +38,7 @@ The `docs/` folder is written to be read on its own, without the code:
 | --- | --- |
 | [`docs/00_overview.md`](docs/00_overview.md) | The project end to end, and the headline results |
 | [`docs/01_dataset.md`](docs/01_dataset.md) | How git history self-labels the dataset, every filter, and the honest limitations |
+| [`docs/02_retrieval.md`](docs/02_retrieval.md) | Sparse vs dense retrieval in plain terms, the corpus design, and the chunking decision |
 | [`docs/architecture.md`](docs/architecture.md) | Map of the codebase and how data flows through it |
 | [`docs/decisions.md`](docs/decisions.md) | Every non-obvious choice, with the alternatives rejected |
 | [`docs/glossary.md`](docs/glossary.md) | Plain-language definitions of every domain term |

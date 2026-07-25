@@ -2,7 +2,8 @@
 SHELL := /bin/bash
 UV := uv
 
-.PHONY: help setup setup-ml test lint fmt db-up db-down db-logs mine stats samples index eval clean
+.PHONY: help setup setup-ml test lint fmt db-up db-down db-logs mine stats samples \
+        index index-stats retrieve eval clean
 
 help:  ## Show this help
 	@echo "Bug Localizer — available commands"
@@ -29,7 +30,7 @@ fmt:  ## Auto-format the code
 	$(UV) run ruff format .
 	$(UV) run ruff check --fix .
 
-db-up:  ## Start Postgres + pgvector (M2)
+db-up:  ## Start Postgres + pgvector
 	docker compose up -d
 	@echo "postgres listening on localhost:5433"
 
@@ -39,6 +40,15 @@ db-down:  ## Stop Postgres
 db-logs:  ## Tail Postgres logs
 	docker compose logs -f postgres
 
+index:  ## Build the corpus index (add ARGS="--repo flask --limit 100")
+	$(UV) run bugloc index $(ARGS)
+
+index-stats:  ## Show what is in the corpus index
+	$(UV) run bugloc index-stats
+
+retrieve:  ## Rank files for one example, BM25 vs dense (add ARGS="-e pandas@abc123")
+	$(UV) run bugloc retrieve $(ARGS)
+
 mine:  ## Mine fix commits into data/examples.jsonl
 	$(UV) run bugloc mine
 
@@ -47,9 +57,6 @@ stats:  ## Print dataset statistics, per repo
 
 samples:  ## Print labeled examples for hand-review of label quality
 	$(UV) run bugloc samples
-
-index:  ## (M2) Build BM25 + pgvector indexes
-	$(UV) run bugloc index
 
 eval:  ## (M3) Run the evaluation and print the comparison table
 	$(UV) run bugloc eval

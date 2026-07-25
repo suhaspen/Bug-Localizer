@@ -275,3 +275,173 @@ leading space (`" DOC: ..."`), which makes every `^`-anchored exclusion pattern
 miss, so docstring commits were labeled as bug fixes. Normalizing at the
 construction boundary rather than at each call site means no future code path —
 including tests — can reintroduce it.
+
+---
+
+## Milestone 2
+
+### D17 — D7 resolved: `rank_bm25`, confirmed with timings
+
+**Decision.** Confirm the provisional Milestone 0 choice. The sparse baseline is
+`rank_bm25`'s `BM25Okapi`, built in memory per query.
+
+**Alternatives.** Postgres full-text search (`tsvector` + `ts_rank_cd`).
+
+**Why.** The open question was whether a per-commit in-memory index bites at
+pandas scale. Measured, the answer splits:
+
+*Memory: no.* A BM25 index over a pandas corpus is ~5 MB of heap; process peak
+RSS ~346 MB. There was never a memory problem.
+
+*Time: yes if naive, and the fix is a cache.* Tokenisation dominates the cost —
+and it is the one stage that caches perfectly, because the same file version
+recurs across hundreds of consecutive commits with an identical token list. A
+bounded LRU keyed on blob hash turns the dominant cost into a dictionary lookup.
+
+Postgres FTS lost on both criteria. It was *slower* (~4.0 s per commit to COPY,
+build tsvectors and a GIN index, versus the entire `rank_bm25` path), and more
+importantly `ts_rank_cd` **is not BM25** — different weighting, no `k1`
+saturation, no `b` length normalisation. Labelling that column "BM25" in a
+results table would have been a false claim, which is the kind of thing this
+project exists to avoid. Its English stemmer is also wrong for code: it would
+mangle `send_file` rather than split it.
+
+### D18 — Corpus = label space (non-test source) by default
+
+**Decision.** The searchable candidate set is exactly the set of files that could
+be a gold label. `corpus.include_tests: true` restores whole-repo search.
+
+**Alternatives.** Search every `.py` file in the tree.
+
+**Why.** Coherence. The miner strips test files from labels, so a gold file can
+never be a test. If tests remained searchable, a method ranking
+`pandas/tests/test_frame.py` first would be scored a *miss* even though that test
+is genuinely about the bug — penalising sensible behaviour for a reason that is
+an artifact of our labelling convention. Matching the candidate set to the label
+space removes the incoherence, and it follows standard practice in the
+bug-localization literature, where test directories are excluded from the corpus.
+
+**Cost, stated because it changes every number we report.** 80% of pandas' `.py`
+files are tests: the corpus drops from 1,405 files / 18.0 MB to 282 files /
+6.5 MB per commit. Ranking within 282 candidates is materially easier than within
+1,405, so accuracy will read higher than a whole-repo search would give. Anyone
+comparing our numbers to another system must check that system's corpus scope
+first. The flag exists so the claim is checkable rather than merely asserted.
+
+### D19 — 700-character fixed windows, 10% overlap
+
+**Decision.** Chunk files into 700-character sliding windows overlapping by 70,
+stored as offsets into the file content.
+
+**Alternatives.** Whole file; 2000-character windows (the Milestone 0 default);
+AST function/class units.
+
+**Why.** The size is not a free parameter — it is dictated by the model. MiniLM
+caps at 256 word-piece tokens, and code measures ~2.8 characters per token
+(versus ~4 for prose), so the model can see about 700 characters of Python.
+Beyond that it truncates **silently**: no error, the tail simply never gets
+embedded. The original 2000-char default would have discarded ~65% of every
+chunk. Whole-file embedding would have captured the first 8% of the median
+corpus file.
+
+*Why not AST chunking*, which is the appealing option: it does not reduce the
+unit count (14.6 vs 20.7 per file — the binding constraint is the token budget,
+not the split strategy), it does not avoid truncation (the median Python function
+measured **536 tokens**, more than twice the limit), and it adds a failure mode
+(`ast.parse` fails on older syntax across 17 years of history, needing a fallback
+anyway). It is the better idea *with a long-context model*, and Milestone 5 needs
+function units for a different reason — localizing *to* functions — which is
+where the AST parser earns its place.
+
+Overlap costs 10% more units and prevents a hard cut landing mid-function and
+leaving neither half matchable. Offsets rather than stored text avoid keeping a
+second, 10%-larger copy of the whole corpus.
+
+### D20 — all-MiniLM-L6-v2, chosen on measured throughput
+
+**Decision.** Keep `all-MiniLM-L6-v2` (384-d).
+
+**Alternatives.** `bge-small-en-v1.5` (512 tokens);
+`jina-embeddings-v2-base-code` (8192 tokens, code-trained).
+
+**Why.** `bge-small` halves the chunk count exactly as intended — and loses by
+3.5x anyway, because it is **6.8x slower per unit**. Doubling context costs more
+than double the compute, and the unit saving does not pay for it. Worth recording
+because the units/file column alone predicts the wrong winner; only the product
+of units and throughput decides it.
+
+The code-native jina model would have been the genuinely interesting option — an
+8192-token context fits most whole files in one unit, eliminating truncation and
+chunking together. It could not be loaded: its remote code calls
+`find_pruneable_heads_and_indices`, removed from current `transformers`. Pinning
+an older `transformers` was judged not worth the dependency risk for a first
+pass. **This is the single most promising upgrade available to the project** and
+is recorded as such rather than quietly dropped.
+
+### D21 — Blob-hash content addressing, and no paths in the store
+
+**Decision.** Storage is keyed on `(repo, blob_sha)`. Paths are not stored; they
+come from `git ls-tree` at query time.
+
+**Why.** Each example searches its own commit, which naively means one corpus per
+example: **5,398,769** (commit, path) file-instances across pandas. Git already
+content-addresses file versions, and untouched files share a blob exactly, so
+keying on blob hash collapses that to **93,848 distinct blobs — 57x**. Without
+this, dense retrieval on this dataset is arithmetically impossible on a laptop.
+
+Paths are excluded because a blob is content, and the same content can live at
+different paths in different commits — storing paths would reintroduce exactly
+the per-commit duplication the blob key removes.
+
+`repo` is in every primary key even though blob hashes are globally unique. That
+denormalisation is deliberate: the project reports per-repo results, so index,
+drop, count and vector search must all be cheaply scopeable to one repository.
+
+### D22 — Exact vector search, no HNSW index
+
+**Decision.** Dense retrieval scans the candidate blobs exactly; no approximate
+nearest-neighbour index.
+
+**Alternatives.** pgvector's HNSW index.
+
+**Why.** HNSW earns its keep when scanning millions of vectors. Here every query
+is restricted to one commit's corpus — a few hundred blobs, order 10,000 chunks —
+and an exact scan is already fast. An approximate index would inject recall error
+into a measurement whose entire purpose is measuring recall. Revisit only if
+query time becomes the bottleneck, and if so, report the ANN recall separately.
+
+### D23 — Deterministic tie-breaking on `(-score, path)`
+
+**Decision.** Both retrievers sort by score descending, then path ascending.
+
+**Why.** Most files score exactly zero on a given BM25 query. Without a
+tie-break their relative order depends on dictionary iteration order, so top-k
+membership could differ between runs on identical inputs. A metric that moves
+when nothing changed is indefensible, and this is a one-line guarantee against it.
+
+### D24 — Postgres 17 via Homebrew, not the Docker Compose file (environment only)
+
+**Decision.** The committed `docker-compose.yml` remains the documented, portable
+setup. On this machine the Docker daemon would not start, so development uses a
+Homebrew PostgreSQL 17 + pgvector 0.8.5 on the same port 5433 with the same DSN.
+
+**Why.** The DSN is the only coupling, so both paths are interchangeable and
+nothing in the code knows the difference. Recorded so the discrepancy between the
+docs and this machine is not mistaken for a reversal of D3 — the reproducible
+story for anyone cloning the repo is still `make db-up`.
+
+Port 5433 also kept an existing local PostgreSQL 16 untouched, which is exactly
+the collision D3 chose that port to avoid.
+
+### D25 — `flask/testsuite/**` excluded; `testing.py` modules kept
+
+**Decision.** Add `**/testsuite/**` to the path exclusions. Do *not* exclude
+paths merely containing "test".
+
+**Why.** Found while reviewing a retrieval result: old flask kept its suite
+inside the package at `flask/testsuite/`, which `**/tests/**` does not match, so
+it was gold for 44 examples. But the fix has to be narrow — `flask/testing.py`
+and `pandas/util/testing.py` are shipped testing *utilities* and part of the
+public API (`pandas.util.testing.assert_frame_equal`), so bugs in them are real
+bugs. A broad match on "test" would have silently deleted 80 legitimate examples
+while fixing 44 bad ones.

@@ -17,12 +17,21 @@ from buglocalizer.cli import app
 REPO_ROOT = Path(__file__).resolve().parents[1]
 runner = CliRunner()
 
-EXPECTED_COMMANDS = ["mine", "dataset-stats", "samples", "index", "retrieve", "eval", "config-show"]
+EXPECTED_COMMANDS = [
+    "mine",
+    "dataset-stats",
+    "samples",
+    "index",
+    "index-stats",
+    "retrieve",
+    "eval",
+    "config-show",
+]
 
-# Commands still stubbed out. `mine` and `dataset-stats` are deliberately absent:
-# they are implemented now, and invoking them here would clone repos and mine
-# real history from a unit test.
-UNIMPLEMENTED = ["index", "retrieve", "eval"]
+# Commands still stubbed out. Implemented commands are deliberately absent from
+# this list: invoking them here would clone repos, mine real history, load a
+# model, or write to Postgres from a unit test.
+UNIMPLEMENTED = ["eval"]
 
 
 def test_help_lists_every_planned_command():

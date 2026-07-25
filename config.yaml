@@ -35,6 +35,12 @@ mining:
     - "docs/**"
     - "doc/**"
     - "**/tests/**"
+    # Old flask kept its suite inside the package as flask/testsuite/, which
+    # `**/tests/**` does not match -- it was gold for 44 examples. Note this is
+    # deliberately NOT `**/testing*`: pandas/util/testing.py and flask/testing.py
+    # are shipped testing *utilities* (public API), so bugs in them are real
+    # bugs and they stay eligible.
+    - "**/testsuite/**"
     - "**/test_*.py"
     - "**/*_test.py"
     - "**/conftest.py"
@@ -96,11 +102,28 @@ split:
   strategy: temporal
   dev_fraction: 0.7
 
+corpus:
+  # The searchable candidate set. Defaults to exactly the set of files that can
+  # be a gold label (non-test source), so the corpus and the label space agree.
+  # Set include_tests: true for the harder, more realistic setting where the
+  # retriever must also learn to avoid test files.
+  include_tests: false
+
 retrieval:
-  chunk_max_chars: 2000
-  chunk_overlap_chars: 200
+  # 700 chars, not 2000. Measured: code tokenizes at ~2.8 chars per word-piece,
+  # and the model's hard limit is 256 tokens, so a 2000-char chunk would be
+  # silently truncated by ~65%. See docs/02_retrieval.md.
+  chunk_max_chars: 700
+  chunk_overlap_chars: 70
   embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  embedding_dim: 384
+  embedding_batch_size: 64
+  device: auto  # auto | mps | cuda | cpu
   top_k: 10
+  # Textbook BM25 parameters: k1 controls term-frequency saturation, b controls
+  # how hard long documents are penalised.
+  bm25_k1: 1.5
+  bm25_b: 0.75
   # Reciprocal Rank Fusion constant; damps the influence of top-ranked outliers.
   rrf_k: 60
 

@@ -25,19 +25,29 @@ Bug Localizer/
 │   ├── logging_setup.py     # one place that configures logging     [M0]
 │   ├── cli.py               # the `bugloc` command surface          [M0]
 │   ├── dataset.py           # Example schema, JSONL io, split, stats [M1]
-│   ├── reporting.py         # stats tables and the sample printer   [M1]
+│   ├── reporting.py         # stats tables, sample + retrieval demo [M1/M2]
+│   ├── corpus.py            # commit → searchable files, blob reads [M2]
 │   ├── mining/
 │   │   ├── repos.py         # clone/fetch into .cache/              [M1]
 │   │   ├── filters.py       # pure commit-filter logic              [M1]
 │   │   └── miner.py         # git log → Example objects             [M1]
-│   ├── indexing/            # source files → BM25 + pgvector        [M2]
-│   ├── retrieval/           # query → ranked files                  [M2]
+│   ├── indexing/
+│   │   ├── chunking.py      # file → overlapping windows            [M2]
+│   │   ├── embedder.py      # sentence-transformers wrapper         [M2]
+│   │   ├── store.py         # Postgres/pgvector schema + io         [M2]
+│   │   └── indexer.py       # the blob-cached index build loop      [M2]
+│   ├── retrieval/
+│   │   ├── base.py          # ScoredFile, RetrievalResult, tokenizer [M2]
+│   │   ├── sparse.py        # BM25 + tokenised-blob LRU cache       [M2]
+│   │   └── dense.py         # pgvector cosine search                [M2]
 │   └── eval/                # ranked files → metrics                [M3]
 ├── tests/
 │   ├── test_config.py       # config loading, overrides, validation
 │   ├── test_cli.py          # command surface smoke tests
 │   ├── test_filters.py      # every filter + borderline rule
-│   └── test_miner.py        # end-to-end mining on a real fixture repo
+│   ├── test_miner.py        # end-to-end mining on a real fixture repo
+│   ├── test_chunking.py     # chunk coverage/overlap + tokenizer
+│   └── test_corpus.py       # corpus scope + BM25 on a fixture repo
 ├── data/                    # examples.jsonl, splits (gitignored)
 ├── results/                 # eval runs (committed — this is the evidence)
 └── docs/                    # the knowledge base
@@ -82,17 +92,21 @@ config.yaml
     │      over-sampling borderline cases
     │
     ├──▶ bugloc index                                                   [M2]
-    │      for each example: checkout parent_sha
-    │      extract .py files → chunks → embeddings
-    │      → Postgres (pgvector) + BM25 index
-    │      cached by git blob hash, so identical file
-    │      versions are embedded exactly once
+    │      for each example's parent_sha:
+    │        git ls-tree      → candidate files (label-space scope)
+    │        DB lookup        → which blobs are already embedded
+    │        git cat-file     → contents of the new ones only
+    │        chunk (700 ch)   → embed → COPY into pgvector
+    │      → blob(repo, blob_sha) + chunk(…, embedding)
+    │      Nothing is keyed by commit: identical file versions
+    │      across commits collapse onto one blob row.
     │
     ├──▶ bugloc retrieve                                                [M2]
-    │      query_text → BM25 ranking
-    │                 → dense ranking (cosine over pgvector)
-    │                 → hybrid (RRF fusion of the two)
-    │      → ranked list of file paths
+    │      git ls-tree at parent_sha → candidate files
+    │      BM25  : read blobs, tokenize (LRU), score in memory
+    │      dense : embed query, cosine over that commit's chunks,
+    │              file score = max over its chunks
+    │      → ranked list of file paths + where gold landed
     │
     └──▶ bugloc eval                                                    [M3]
            for each held-out example: retrieve, compare to gold_files
@@ -190,6 +204,46 @@ temporal split, and the statistics functions. The split sorts on
 `(authored_at, fix_sha)` so it is byte-identical across runs even when two
 commits share a timestamp.
 
+### `corpus.py`
+
+Turns a commit into a searchable candidate set. `list_corpus()` runs
+`git ls-tree` and applies the same path exclusions the miner uses, so corpus and
+label space agree by construction rather than by two lists being kept in sync by
+hand. `read_blobs()` reads many file contents through a single
+`git cat-file --batch` process — one process per tree rather than per file, which
+is 79 ms for a pandas tree.
+
+The batch reader is worth a glance: it walks the output stream by byte offset
+using each header's declared size. A missing sha produces a short `<sha> missing`
+line with no payload, and mishandling that would desynchronise the stream and
+silently mis-assign contents to *every subsequent file*. There is a test for it.
+
+### `indexing/`
+
+`chunking.py` returns `(start, end)` offsets rather than strings, so file content
+is stored once and a chunk is a view into it. `embedder.py` wraps
+sentence-transformers, resolves the device, and refuses to start if the model's
+dimensionality disagrees with the configured `embedding_dim` — the pgvector
+column is fixed-width, so a mismatch would otherwise fail deep inside a COPY.
+
+`indexer.py` is the build loop, and its shape is entirely dictated by the blob
+cache: list the corpus, ask the DB which blobs it already has, read and embed
+only the remainder. Chunks are batched *across* blobs before encoding, because a
+small file yields one chunk and encoding one chunk at a time wastes most of the
+GPU's throughput. Examples are processed oldest-first so consecutive commits
+share nearly their whole tree.
+
+`store.py` holds the schema and all SQL. Chunks are written with binary `COPY`
+rather than INSERT, which matters when a single commit contributes ~10,000 rows.
+
+### `retrieval/`
+
+`base.py` owns the code-aware tokenizer (identifiers emitted whole *and* split on
+snake/camel boundaries) and the result types. `sparse.py` is BM25 plus the
+bounded LRU of tokenised blobs that makes it affordable. `dense.py` is a single
+SQL statement: cosine distance restricted to the commit's blobs, `MIN` per blob,
+which is max-similarity pooling expressed as min-distance.
+
 ### `reporting.py`
 
 Rich tables for `dataset-stats` and the panel renderer for `samples`. Separate
@@ -232,6 +286,22 @@ chasing coverage:
   which reads the gold file at both SHAs and asserts the bug is present at the
   parent and the fix is not. That is the project's central correctness property,
   and it is checked rather than assumed.
+
+- **Chunking** — that chunks *cover every character* of the file, that overlap is
+  exactly as configured, and that no chunk exceeds the limit. Coverage is the
+  load-bearing one: a gap means a region of code is permanently unretrievable and
+  every dense number is silently capped with no error anywhere.
+- **Tokenizer** — that identifiers are emitted both whole and split, and that a
+  single-word identifier is *not* emitted twice (which would double-weight it).
+- **Corpus + BM25** — against a real fixture repo: that the default corpus equals
+  the label space, that `include_tests` widens it, that `read_blobs` survives a
+  missing sha without desynchronising the stream, and that ranking is
+  deterministic on ties.
+
+Deliberately not tested: the embedding model's output values, and Postgres round
+trips. Both are third-party behaviour, and asserting on specific float outputs
+would produce a test that fails whenever the model version changes without
+indicating anything is actually wrong.
 
 Coming: metric functions tested against hand-computed examples (M3) — a wrong
 metric silently changes every number we report.

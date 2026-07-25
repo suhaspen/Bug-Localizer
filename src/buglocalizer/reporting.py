@@ -253,3 +253,79 @@ def _render_one(console: Console, ex: Example, kind: str) -> None:
 
 def heldout_only(examples: list[Example]) -> list[Example]:
     return [e for e in examples if e.split == HELDOUT]
+
+
+def run_retrieval_demo(console: Console, cfg, example: Example, method: str, k: int) -> None:
+    """Run retrieval for one example and show the ranking against ground truth.
+
+    This is the human-readable counterpart to the eval harness: it shows not
+    just whether the gold file was found but *where* it ranked, which is the
+    thing top-k accuracy compresses away.
+    """
+    from buglocalizer.corpus import list_corpus, read_blobs, repo_path
+    from buglocalizer.indexing.embedder import get_embedder
+    from buglocalizer.indexing.store import connect
+    from buglocalizer.retrieval import bm25_search, dense_search
+
+    repo_dir = repo_path(cfg, example.repo)
+    files = list_corpus(repo_dir, example.parent_sha, cfg)
+    gold = set(example.gold_files)
+
+    console.print(
+        Panel(
+            f"[bold cyan]QUERY[/]\n{example.query_text[:600]}\n\n"
+            f"[bold green]GOLD[/] {', '.join(example.gold_files)}\n"
+            f"[dim]corpus at {example.parent_sha[:12]}: {len(files):,} candidate files"
+            f"  ·  include_tests={cfg.corpus.include_tests}[/]",
+            title=f"[bold]{example.example_id}[/]  ({example.split})",
+            title_align="left",
+            border_style="blue",
+        )
+    )
+
+    results = []
+    if method in ("bm25", "both"):
+        contents = read_blobs(repo_dir, sorted({f.blob_sha for f in files}))
+        results.append(bm25_search(cfg, example.example_id, example.query_text, files, contents))
+    if method in ("dense", "both"):
+        embedder = get_embedder(cfg)
+        with connect(cfg) as conn:
+            results.append(
+                dense_search(
+                    cfg,
+                    conn,
+                    example.repo,
+                    example.example_id,
+                    example.query_text,
+                    files,
+                    embedder,
+                )
+            )
+
+    for result in results:
+        table = Table(
+            title=f"{result.method.upper()}  —  {result.n_candidates:,} candidates, "
+            f"{result.seconds * 1000:.0f} ms",
+            title_justify="left",
+        )
+        table.add_column("#", justify="right")
+        table.add_column("score", justify="right")
+        table.add_column("file")
+        for i, sf in enumerate(result.ranked[:k], 1):
+            hit = sf.path in gold
+            table.add_row(
+                str(i),
+                f"{sf.score:.4f}",
+                f"{'✓ ' if hit else '  '}{sf.path}",
+                style="bold green" if hit else None,
+            )
+        console.print(table)
+
+        ranks = [i for i, sf in enumerate(result.ranked, 1) if sf.path in gold]
+        if ranks:
+            console.print(
+                f"  [green]gold found at rank {', '.join(map(str, ranks))}[/]"
+                f"  (of {result.n_candidates:,})\n"
+            )
+        else:
+            console.print("  [red]gold not ranked at all[/]\n")

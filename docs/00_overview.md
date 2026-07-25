@@ -243,3 +243,44 @@ gold label for 108 examples; lowercase `docs:` prefixes bypassed the filter;
 squash trailers polluted 357 queries; a leading space defeated every anchored
 pattern). Fixing them removed 240 examples — the dataset got smaller and more
 trustworthy.
+
+### Milestone 2 — Corpus indexing and both retrievers
+
+Built the search side: a Postgres/pgvector corpus index and two working
+retrievers. Full treatment in `docs/02_retrieval.md`. No accuracy numbers yet —
+that is deliberately Milestone 3's job, because picking illustrative examples
+after seeing results is how people fool themselves.
+
+The dataset shrank slightly to **7,445 examples**: reviewing a retrieval result
+surfaced that old flask kept its test suite at `flask/testsuite/`, which the
+`**/tests/**` glob never matched, so it was gold for 44 examples.
+
+Four decisions, each settled by measurement rather than preference:
+
+- **Blob-hash content addressing.** Storage is keyed on the git blob hash, not
+  (commit, path). Across pandas, **5,398,769 file instances collapse to 93,848
+  distinct blobs — 57x**. Without this, embedding the corpus is arithmetically
+  impossible on a laptop.
+- **Chunk size is 700 characters, and it is not a free parameter.** The model
+  caps at 256 tokens and code measures ~2.8 characters per token, so 700
+  characters is what fits. Longer chunks are truncated *silently*; the original
+  2000-char default would have discarded ~65% of every chunk.
+- **BM25 stays in Python (D7 confirmed).** Memory was never the problem (~5 MB
+  per index). Tokenisation was — 60% of per-query cost — and it caches perfectly
+  by blob hash, cutting a full held-out pass from 53 to 21 minutes. Postgres FTS
+  measured *slower*, and `ts_rank_cd` is not BM25, so shipping it under that name
+  would have been a false claim.
+- **Corpus = label space.** The searchable set is exactly the files that could be
+  a gold label. This matters a lot and is stated plainly: 80% of pandas' Python
+  files are tests, so the candidate set is 282 files rather than 1,405. It is
+  behind a flag so the harder setting is checkable.
+
+Index built: **806 commits, 184,302 chunks, 434 MB** — flask and requests
+complete, plus the 120 newest pandas held-out examples. Both retrievers return
+ranked files with the gold file's rank shown. **92 passing tests.**
+
+One finding worth carrying into Milestone 3: the blob cache's payoff depends on
+how *clustered in time* the commits are, not just how many. A random 150-example
+pandas sample spanning 2021–2026 barely cached at all; the 120 newest examples
+ran at a **98% hit rate and 59.7x saving**. Indexing the full held-out set should
+be ordered accordingly.

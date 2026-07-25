@@ -95,6 +95,40 @@ Necessary because embedding models have a token limit, and useful because one
 vector for a 2,000-line file is too blurry to be discriminative. The tradeoff:
 smaller chunks are sharper but lose surrounding context.
 
+**Token / word-piece token** — The unit a neural model actually reads. Text is
+split into sub-word pieces, so `send_file` might become `send`, `_`, `file`.
+Models have a hard limit on how many they accept — 256 for the model used here —
+and anything past it is **silently truncated**, with no error. Code is far denser
+than prose: measured at ~2.8 characters per token versus ~4 for English, because
+identifiers and punctuation fragment heavily. This is why the chunk size is 700
+characters and not a round number someone liked.
+
+**Context length / context window** — The maximum number of tokens a model can
+process at once. The single most important spec when choosing an embedding model
+for code, because it determines how much chunking you are forced to do.
+
+**Corpus scope** — The decision about which files a retriever is allowed to
+return. Here the corpus defaults to exactly the set of files that could be a gold
+label (non-test source), so that a "wrong" answer is genuinely wrong rather than
+an artifact of the labelling convention. It matters enormously: 80% of pandas'
+Python files are tests, so this choice changes the candidate set from 1,405 files
+to 282 and therefore changes every accuracy number.
+
+**Content addressing** — Identifying data by a hash of its contents rather than
+by a name or location. Git does this for every file version (see **blob hash**),
+which is what lets this project store one row per distinct file *version* instead
+of one per (commit, path) pair — a 57x reduction on this dataset.
+
+**Max-pooling over chunks** — Scoring a file by the best-scoring chunk it
+contains, rather than the average. A file is relevant if *any* part of it is;
+averaging would punish a large file containing one highly relevant function.
+
+**Exact vs approximate nearest neighbour (ANN)** — Exact search compares the
+query to every candidate vector; ANN (e.g. pgvector's **HNSW** index) trades a
+little recall for speed on very large collections. This project uses exact
+search, because each query is restricted to one commit's few hundred files and
+approximation would inject error into a measurement of recall.
+
 **Hybrid retrieval** — Combining sparse and dense results, on the reasoning that
 they fail in different ways, so their errors partly cancel.
 

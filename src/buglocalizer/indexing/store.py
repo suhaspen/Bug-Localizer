@@ -1,0 +1,150 @@
+"""Postgres + pgvector storage for the corpus.
+
+Schema shape, and why:
+
+    blob   (repo, blob_sha) -> the file's text, stored exactly once
+    chunk  (repo, blob_sha, chunk_idx) -> a (start, end) window + its embedding
+
+`repo` is part of every primary key even though a blob hash is already globally
+unique by construction. That is deliberate denormalisation: the project reports
+per-repo results, so every operation — index, drop, count, vector search — needs
+to be cheaply scopeable to one repository.
+
+Note what is *not* stored: paths. A blob is content, and the same content can
+live at different paths in different commits. Paths come from `git ls-tree` at
+query time, which keeps the store free of commit-specific duplication.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+
+import psycopg
+from pgvector.psycopg import register_vector
+
+from buglocalizer.config import Config
+from buglocalizer.logging_setup import get_logger
+
+log = get_logger(__name__)
+
+SCHEMA = """
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS blob (
+    repo      text   NOT NULL,
+    blob_sha  text   NOT NULL,
+    n_bytes   int    NOT NULL,
+    content   text   NOT NULL,
+    PRIMARY KEY (repo, blob_sha)
+);
+
+CREATE TABLE IF NOT EXISTS chunk (
+    repo       text NOT NULL,
+    blob_sha   text NOT NULL,
+    chunk_idx  int  NOT NULL,
+    start_char int  NOT NULL,
+    end_char   int  NOT NULL,
+    embedding  vector(%(dim)s) NOT NULL,
+    PRIMARY KEY (repo, blob_sha, chunk_idx),
+    FOREIGN KEY (repo, blob_sha) REFERENCES blob(repo, blob_sha) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS chunk_repo_blob_idx ON chunk (repo, blob_sha);
+
+CREATE TABLE IF NOT EXISTS indexed_commit (
+    repo       text NOT NULL,
+    commit_sha text NOT NULL,
+    n_files    int  NOT NULL,
+    indexed_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo, commit_sha)
+);
+"""
+
+
+@contextmanager
+def connect(cfg: Config):
+    with psycopg.connect(cfg.db.dsn) as conn:
+        register_vector(conn)
+        yield conn
+
+
+def init_schema(cfg: Config) -> None:
+    with connect(cfg) as conn:
+        conn.execute(SCHEMA % {"dim": cfg.retrieval.embedding_dim})
+        conn.commit()
+    log.info("schema ready (embedding dim %d)", cfg.retrieval.embedding_dim)
+
+
+def existing_blobs(conn, repo: str, blob_shas: list[str]) -> set[str]:
+    """Which of these blobs are already embedded — the cache check."""
+    if not blob_shas:
+        return set()
+    rows = conn.execute(
+        "SELECT blob_sha FROM blob WHERE repo = %s AND blob_sha = ANY(%s)",
+        (repo, blob_shas),
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def insert_blob_with_chunks(
+    conn, repo: str, blob_sha: str, content: str, chunks, embeddings
+) -> None:
+    conn.execute(
+        "INSERT INTO blob (repo, blob_sha, n_bytes, content) VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT DO NOTHING",
+        (repo, blob_sha, len(content.encode()), content),
+    )
+    with (
+        conn.cursor() as cur,
+        cur.copy(
+            "COPY chunk (repo, blob_sha, chunk_idx, start_char, end_char, embedding) FROM STDIN "
+            "WITH (FORMAT BINARY)"
+        ) as cp,
+    ):
+        cp.set_types(["text", "text", "int4", "int4", "int4", "vector"])
+        for ch, emb in zip(chunks, embeddings, strict=True):
+            cp.write_row([repo, blob_sha, ch.idx, ch.start, ch.end, emb])
+
+
+def mark_commit_indexed(conn, repo: str, commit_sha: str, n_files: int) -> None:
+    conn.execute(
+        "INSERT INTO indexed_commit (repo, commit_sha, n_files) VALUES (%s, %s, %s) "
+        "ON CONFLICT (repo, commit_sha) DO UPDATE SET n_files = EXCLUDED.n_files, "
+        "indexed_at = now()",
+        (repo, commit_sha, n_files),
+    )
+
+
+def is_commit_indexed(conn, repo: str, commit_sha: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM indexed_commit WHERE repo = %s AND commit_sha = %s", (repo, commit_sha)
+    ).fetchone()
+    return row is not None
+
+
+def load_blob_contents(conn, repo: str, blob_shas: list[str]) -> dict[str, str]:
+    if not blob_shas:
+        return {}
+    rows = conn.execute(
+        "SELECT blob_sha, content FROM blob WHERE repo = %s AND blob_sha = ANY(%s)",
+        (repo, blob_shas),
+    ).fetchall()
+    return dict(rows)
+
+
+def index_stats(conn) -> list[tuple]:
+    return conn.execute(
+        """
+        SELECT b.repo,
+               count(DISTINCT b.blob_sha)                       AS blobs,
+               coalesce(sum(b.n_bytes), 0)                       AS bytes,
+               (SELECT count(*) FROM chunk c WHERE c.repo = b.repo) AS chunks,
+               (SELECT count(*) FROM indexed_commit i WHERE i.repo = b.repo) AS commits
+        FROM blob b GROUP BY b.repo ORDER BY b.repo
+        """
+    ).fetchall()
+
+
+def drop_repo(conn, repo: str) -> None:
+    conn.execute("DELETE FROM blob WHERE repo = %s", (repo,))
+    conn.execute("DELETE FROM indexed_commit WHERE repo = %s", (repo,))

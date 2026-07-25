@@ -197,6 +197,23 @@ def test_build_and_packaging_files_are_not_gold():
     assert classify(commit(changed_paths=("setup.py",)), cfg).reason == NO_SOURCE_FILES
 
 
+def test_testsuite_directory_excluded_but_testing_utilities_kept():
+    """`flask/testsuite/` is the test suite; `flask/testing.py` is public API.
+
+    The first was gold for 44 examples until `**/testsuite/**` was added. The
+    second must stay eligible — `pandas.util.testing.assert_frame_equal` and
+    `flask.testing.FlaskClient` are shipped to users, so bugs in them are real
+    bugs, and over-broad matching on "test" would silently delete 80 examples.
+    """
+    cfg = CFG.model_copy(
+        update={"exclude_path_globs": [*CFG.exclude_path_globs, "**/testsuite/**"]}
+    )
+    gold = compute_gold_files(
+        ("flask/testsuite/basic.py", "flask/testing.py", "pandas/util/testing.py"), cfg
+    )
+    assert gold == ("flask/testing.py", "pandas/util/testing.py")
+
+
 def test_revert_and_typo_commits_rejected():
     assert classify(commit(message="Revert 'BUG: fix the thing'"), CFG).reason == EXCLUDED_MESSAGE
     assert classify(commit(message="Fix typo in comment"), CFG).reason == EXCLUDED_MESSAGE

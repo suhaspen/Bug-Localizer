@@ -69,11 +69,20 @@ class SplitConfig(_Strict):
     dev_fraction: float = Field(default=0.7, gt=0.0, lt=1.0)
 
 
+class CorpusConfig(_Strict):
+    include_tests: bool = False
+
+
 class RetrievalConfig(_Strict):
-    chunk_max_chars: int = Field(default=2000, ge=100)
-    chunk_overlap_chars: int = Field(default=200, ge=0)
+    chunk_max_chars: int = Field(default=700, ge=100)
+    chunk_overlap_chars: int = Field(default=70, ge=0)
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dim: int = Field(default=384, ge=1)
+    embedding_batch_size: int = Field(default=64, ge=1)
+    device: Literal["auto", "mps", "cuda", "cpu"] = "auto"
     top_k: int = Field(default=10, ge=1)
+    bm25_k1: float = Field(default=1.5, gt=0)
+    bm25_b: float = Field(default=0.75, ge=0, le=1)
     rrf_k: int = Field(default=60, ge=1)
 
     @field_validator("chunk_overlap_chars")
@@ -99,6 +108,7 @@ class Config(_Strict):
     repos: list[RepoConfig] = Field(default_factory=list)
     mining: MiningConfig = Field(default_factory=MiningConfig)
     split: SplitConfig = Field(default_factory=SplitConfig)
+    corpus: CorpusConfig = Field(default_factory=CorpusConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     db: DbConfig = Field(default_factory=DbConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
