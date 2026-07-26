@@ -445,3 +445,123 @@ and `pandas/util/testing.py` are shipped testing *utilities* and part of the
 public API (`pandas.util.testing.assert_frame_equal`), so bugs in them are real
 bugs. A broad match on "test" would have silently deleted 80 legitimate examples
 while fixing 44 bad ones.
+
+---
+
+## Milestone 3
+
+### D26 — Report top-1/5/10, MRR and MAP together
+
+**Decision.** All five numbers, every run.
+
+**Alternatives.** Just top-k accuracy, which is what the task description implies.
+
+**Why.** They disagree in informative ways. Top-k accuracy is binary per example
+and maps directly onto how the tool is used (scan a short list, find one lead),
+so it is the headline. But it cannot distinguish "gold at rank 2" from "gold at
+rank 10", which is a large practical difference — that is what MRR adds. And MRR
+stops at the *first* gold file, so a method that finds one of four gold files at
+rank 1 scores a perfect 1.0; MAP is the only one of the three that notices. With
+77% of examples single-gold, MAP should track slightly below MRR, and a large
+divergence would itself be a signal something is wrong.
+
+### D27 — One retrieval pass per example, hybrid fused from it
+
+**Decision.** Each example is retrieved once per first-stage method; hybrid is
+computed by fusing those same two rankings rather than re-running anything.
+
+**Why.** Not just performance, though running the eval three times would triple
+the cost. It also guarantees the three methods see *identical* candidate sets and
+identical corpus state, so any difference in the table is attributable to ranking
+rather than to two runs having drifted apart.
+
+### D28 — Both corpus scopes, evaluated over the same examples
+
+**Decision.** Every evaluation runs at both scopes and reports them side by side.
+When more than one scope is requested, the example set is restricted to commits
+covered at *every* scope.
+
+**Alternatives.** Report only the default (tests-excluded) scope.
+
+**Why.** Excluding tests makes the task materially easier — the pandas candidate
+set drops from ~1,400 files to ~290 — so a single number would be
+defensible-but-flattering. Reporting the harder number next to it costs one extra
+run and pre-empts the obvious objection.
+
+The intersection restriction is a correctness requirement, not tidiness. The wide
+scope is far more expensive to index, so it always covers fewer commits. Without
+the restriction, the two columns would be computed over different example sets
+and the delta between them would conflate *scope* with *sample* — which is
+exactly the kind of quiet confound that makes a comparison worthless.
+
+### D29 — The held-out peek ledger
+
+**Decision.** Every held-out evaluation appends a line to
+`results/heldout_log.jsonl` (timestamp, git SHA, scope, n). The next peek number
+is printed before the run starts.
+
+**Alternatives.** Just save results files and count them if anyone asks.
+
+**Why.** A held-out set stops being held out the moment decisions are made from
+it, and those decisions are rarely explicit — you see dense underperform, decide
+700 was "arbitrary anyway", and re-run. Nothing dishonest happened, but judgement
+is now baked into the number. The count of looks is the cheapest honest upper
+bound on how much, so it is recorded rather than remembered. Printing the next
+peek number *before* the run also adds a small useful moment of friction.
+
+The first ledger entry is a deliberate example: a flask-only smoke test to
+validate the harness. It is recorded rather than excluded, because a ledger you
+edit is not evidence.
+
+### D30 — Aggregate numbers always print their composition first
+
+**Decision.** The composition table precedes the aggregate, and a warning fires
+when any repo exceeds 50% of the eval set.
+
+**Why.** pandas is 91% of the full held-out set. An aggregate over that is a
+pandas number with a rounding error of flask attached, and calling it "cross-repo
+accuracy" would be misleading. Rather than relying on the reader to check, the
+tool refuses to show an aggregate without the composition beside it. The per-repo
+tables are the ones that support per-repo claims.
+
+### D31 — Eval set capped at pandas' newest 120 held-out examples
+
+**Decision.** The Milestone 3 eval covers flask (85) + requests (120) + pandas
+(120 newest held-out) = 325 examples, rather than the full 2,235-example held-out
+set.
+
+**Alternatives.** Full held-out; the 505-example set originally planned.
+
+**Why.** Cost, measured rather than assumed — and the estimate was wrong in an
+instructive way. The plan projected ~1.6 h to index pandas' newest 300 at the
+wide scope. Actual throughput was ~1 commit/minute, projecting to **~5 hours**,
+because the wide scope embeds ~5x the files per commit and the marginal blob rate
+(~52/commit) was ~3.5x what the sampling-based estimate suggested. The estimate
+was built from *distinct blobs across the whole window*, which understates the
+per-commit churn that the incremental build actually pays.
+
+Capping at 120 keeps the wide index around 2 hours and, importantly, makes the
+pandas slice identical at both scopes so the scope comparison is clean.
+
+**What it costs.** 325 examples gives a standard error of roughly 2.8 points on
+an accuracy near 0.5, so differences of 6+ points are trustworthy and 2-point
+differences are not. The pandas eval also covers only its newest held-out
+examples (2026), not the full 2021+ window.
+
+**Why this is recoverable.** Indexing is incremental and blob-cached, so
+expanding to the full held-out set later pays only for commits not yet covered —
+no restart. The narrow scope already covers 121 pandas commits; the expensive
+part is the wide scope, and it can run unattended.
+
+### D32 — `indexed_commit` records the corpus scope it was built at
+
+**Decision.** A boolean `include_tests` column; a commit counts as covered only
+if indexed at a scope at least as wide as the one requested.
+
+**Why.** A bug found while planning this milestone. The wide scope embeds a
+superset of the default scope's blobs, which is what lets one build serve both
+evaluations — but without recording *which* scope produced the coverage, a later
+wide-scope run would see the commit marked "indexed", skip it, and leave every
+test file unembedded. Dense retrieval would then score those files at -1 and rank
+them last, producing a wide-scope number that looked plausible and was silently
+measuring an incomplete index.

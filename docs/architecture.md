@@ -39,15 +39,21 @@ Bug Localizer/
 │   ├── retrieval/
 │   │   ├── base.py          # ScoredFile, RetrievalResult, tokenizer [M2]
 │   │   ├── sparse.py        # BM25 + tokenised-blob LRU cache       [M2]
-│   │   └── dense.py         # pgvector cosine search                [M2]
-│   └── eval/                # ranked files → metrics                [M3]
+│   │   ├── dense.py         # pgvector cosine search                [M2]
+│   │   └── hybrid.py        # RRF fusion of ranked lists            [M3]
+│   └── eval/
+│       ├── metrics.py       # top-k, MRR, MAP — pure functions      [M3]
+│       ├── harness.py       # run all methods, accumulate scores    [M3]
+│       └── results.py       # JSON/markdown output + peek ledger    [M3]
 ├── tests/
 │   ├── test_config.py       # config loading, overrides, validation
 │   ├── test_cli.py          # command surface smoke tests
 │   ├── test_filters.py      # every filter + borderline rule
 │   ├── test_miner.py        # end-to-end mining on a real fixture repo
 │   ├── test_chunking.py     # chunk coverage/overlap + tokenizer
-│   └── test_corpus.py       # corpus scope + BM25 on a fixture repo
+│   ├── test_corpus.py       # corpus scope + BM25 on a fixture repo
+│   ├── test_metrics.py      # hand-computed metric + RRF values
+│   └── test_eval.py         # score accumulation, composition, ledger
 ├── data/                    # examples.jsonl, splits (gitignored)
 ├── results/                 # eval runs (committed — this is the evidence)
 └── docs/                    # the knowledge base
@@ -109,9 +115,16 @@ config.yaml
     │      → ranked list of file paths + where gold landed
     │
     └──▶ bugloc eval                                                    [M3]
-           for each held-out example: retrieve, compare to gold_files
-           → top-1/5/10 accuracy, MRR, MAP
-           → results/<timestamp>.json + a markdown table
+           restrict examples to commits covered at EVERY requested scope
+           for each scope (tests excluded, tests included):
+             for each example, in commit order:
+               list_corpus → BM25 ranking
+                           → dense ranking
+                           → hybrid = RRF(bm25, dense)
+               score all three against gold_files
+           → per-repo + aggregate: top-1/5/10, MRR, MAP
+           → results/<timestamp>.json, results/latest.md
+           → append to results/heldout_log.jsonl (the peek ledger)
 ```
 
 ---
@@ -243,6 +256,30 @@ snake/camel boundaries) and the result types. `sparse.py` is BM25 plus the
 bounded LRU of tokenised blobs that makes it affordable. `dense.py` is a single
 SQL statement: cosine distance restricted to the commit's blobs, `MIN` per blob,
 which is max-similarity pooling expressed as min-distance.
+
+### `eval/`
+
+`metrics.py` is the most carefully isolated module in the project: pure
+functions over `(ranked_paths, gold_paths)` with no git, no database and no
+model. That isolation is deliberate, because a metric bug does not crash — it
+shifts every published number by a plausible amount — so every metric must be
+checkable against values computed by hand in a test.
+
+`harness.py` runs each example once per first-stage method and fuses hybrid from
+those same rankings, so the three methods provably see identical candidate sets.
+It skips examples whose parent commit is not indexed at the current scope:
+scoring them would silently record dense misses and depress the dense column for
+a reason that has nothing to do with retrieval. Examples are processed in commit
+order to keep the tokenised-blob cache warm.
+
+`results.py` serialises a run with its git SHA and full retrieval config — a
+number is only reproducible as (code + config) — and owns the held-out peek
+ledger.
+
+`retrieval/hybrid.py` implements RRF. Worth reading for the docstring alone: it
+explains why score-level fusion is not an option here (BM25 scores are unbounded
+and corpus-dependent, cosine lives in [-1, 1]) and what the `k` constant actually
+controls.
 
 ### `reporting.py`
 

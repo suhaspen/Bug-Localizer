@@ -178,6 +178,20 @@ of four is better than one that surfaces one of four.
 correct; recall is the share of correct results that were returned. Ranking
 metrics are built from these evaluated at each cutoff.
 
+**Standard error** — Roughly, how much a measured accuracy would wobble if you
+re-ran it on a different sample of the same size. For an accuracy near 0.5 it is
+about `0.5 / sqrt(n)`, so 325 examples gives ~2.8 points. It is what tells you
+whether a gap between two methods is a real difference or noise: on 325 examples
+a 6-point gap is meaningful and a 2-point gap is not.
+
+**Peek / peek ledger** — A record of every evaluation run against the held-out
+set. Each look at held-out data lets a little judgement leak into decisions that
+follow, so the number of looks is logged as an honest upper bound on how much.
+
+**Aggregate composition** — The per-repo makeup of an evaluation set. Reported
+alongside every aggregate number here, because an "aggregate" over a set that is
+91% one repository is that repository's number wearing a cross-repo label.
+
 ---
 
 ## Tooling & method

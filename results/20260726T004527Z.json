@@ -1,0 +1,90 @@
+{
+  "timestamp": "2026-07-26T00:45:26.760650+00:00",
+  "label": "harness smoke test (flask only)",
+  "split": "heldout",
+  "git_sha": "0d1cc12",
+  "git_dirty": true,
+  "platform": "macOS-14.5-arm64-arm-64bit",
+  "config": {
+    "include_tests": false,
+    "chunk_max_chars": 700,
+    "chunk_overlap_chars": 70,
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "bm25_k1": 1.5,
+    "bm25_b": 0.75,
+    "rrf_k": 60,
+    "seed": 42,
+    "dev_fraction": 0.7
+  },
+  "n_examples": 85,
+  "skipped_unindexed": 0,
+  "mean_candidates": 28.3,
+  "seconds": 24.4,
+  "composition": [
+    {
+      "repo": "flask",
+      "n": 85,
+      "share": 1.0
+    }
+  ],
+  "overall": {
+    "bm25": {
+      "n": 85,
+      "top1": 0.4588,
+      "top5": 0.7647,
+      "top10": 0.8235,
+      "mrr": 0.5817,
+      "map": 0.5752,
+      "mean_seconds": 0.0478
+    },
+    "dense": {
+      "n": 85,
+      "top1": 0.4588,
+      "top5": 0.7176,
+      "top10": 0.8824,
+      "mrr": 0.5844,
+      "map": 0.5676,
+      "mean_seconds": 0.1598
+    },
+    "hybrid": {
+      "n": 85,
+      "top1": 0.4824,
+      "top5": 0.7294,
+      "top10": 0.9059,
+      "mrr": 0.5943,
+      "map": 0.5849,
+      "mean_seconds": 0.0001
+    }
+  },
+  "per_repo": {
+    "flask": {
+      "bm25": {
+        "n": 85,
+        "top1": 0.4588,
+        "top5": 0.7647,
+        "top10": 0.8235,
+        "mrr": 0.5817,
+        "map": 0.5752,
+        "mean_seconds": 0.0478
+      },
+      "dense": {
+        "n": 85,
+        "top1": 0.4588,
+        "top5": 0.7176,
+        "top10": 0.8824,
+        "mrr": 0.5844,
+        "map": 0.5676,
+        "mean_seconds": 0.1598
+      },
+      "hybrid": {
+        "n": 85,
+        "top1": 0.4824,
+        "top5": 0.7294,
+        "top10": 0.9059,
+        "mrr": 0.5943,
+        "map": 0.5849,
+        "mean_seconds": 0.0001
+      }
+    }
+  }
+}

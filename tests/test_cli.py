@@ -28,10 +28,11 @@ EXPECTED_COMMANDS = [
     "config-show",
 ]
 
-# Commands still stubbed out. Implemented commands are deliberately absent from
-# this list: invoking them here would clone repos, mine real history, load a
-# model, or write to Postgres from a unit test.
-UNIMPLEMENTED = ["eval"]
+# Every command is implemented as of Milestone 3, so nothing is exercised here.
+# Kept as an explicit empty list rather than deleting the test: invoking a real
+# command from a unit test would clone repos, load a model, write to Postgres,
+# and — for `eval` — append a bogus entry to the held-out peek ledger.
+UNIMPLEMENTED: list[str] = []
 
 
 def test_help_lists_every_planned_command():

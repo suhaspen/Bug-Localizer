@@ -39,6 +39,7 @@ The `docs/` folder is written to be read on its own, without the code:
 | [`docs/00_overview.md`](docs/00_overview.md) | The project end to end, and the headline results |
 | [`docs/01_dataset.md`](docs/01_dataset.md) | How git history self-labels the dataset, every filter, and the honest limitations |
 | [`docs/02_retrieval.md`](docs/02_retrieval.md) | Sparse vs dense retrieval in plain terms, the corpus design, and the chunking decision |
+| [`docs/03_evaluation.md`](docs/03_evaluation.md) | Every metric with a worked example, the split rationale, and the results interpreted |
 | [`docs/architecture.md`](docs/architecture.md) | Map of the codebase and how data flows through it |
 | [`docs/decisions.md`](docs/decisions.md) | Every non-obvious choice, with the alternatives rejected |
 | [`docs/glossary.md`](docs/glossary.md) | Plain-language definitions of every domain term |

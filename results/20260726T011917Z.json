@@ -1,0 +1,158 @@
+{
+  "timestamp": "2026-07-26T01:19:17.175856+00:00",
+  "label": "M3 baseline: BM25 vs dense vs hybrid, both scopes",
+  "split": "heldout",
+  "git_sha": "0d1cc12",
+  "git_dirty": true,
+  "platform": "macOS-14.5-arm64-arm-64bit",
+  "config": {
+    "include_tests": true,
+    "chunk_max_chars": 700,
+    "chunk_overlap_chars": 70,
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "bm25_k1": 1.5,
+    "bm25_b": 0.75,
+    "rrf_k": 60,
+    "seed": 42,
+    "dev_fraction": 0.7
+  },
+  "n_examples": 337,
+  "skipped_unindexed": 0,
+  "mean_candidates": 633.3,
+  "seconds": 210.5,
+  "composition": [
+    {
+      "repo": "flask",
+      "n": 85,
+      "share": 0.2522
+    },
+    {
+      "repo": "pandas",
+      "n": 132,
+      "share": 0.3917
+    },
+    {
+      "repo": "requests",
+      "n": 120,
+      "share": 0.3561
+    }
+  ],
+  "overall": {
+    "bm25": {
+      "n": 337,
+      "top1": 0.2552,
+      "top5": 0.5816,
+      "top10": 0.7507,
+      "mrr": 0.4157,
+      "map": 0.4091,
+      "mean_seconds": 0.3364
+    },
+    "dense": {
+      "n": 337,
+      "top1": 0.2849,
+      "top5": 0.5816,
+      "top10": 0.7211,
+      "mrr": 0.426,
+      "map": 0.4113,
+      "mean_seconds": 0.1429
+    },
+    "hybrid": {
+      "n": 337,
+      "top1": 0.3175,
+      "top5": 0.6825,
+      "top10": 0.8042,
+      "mrr": 0.4745,
+      "map": 0.4623,
+      "mean_seconds": 0.0072
+    }
+  },
+  "per_repo": {
+    "flask": {
+      "bm25": {
+        "n": 85,
+        "top1": 0.3647,
+        "top5": 0.6706,
+        "top10": 0.7647,
+        "mrr": 0.504,
+        "map": 0.5014,
+        "mean_seconds": 0.0386
+      },
+      "dense": {
+        "n": 85,
+        "top1": 0.4,
+        "top5": 0.6471,
+        "top10": 0.7529,
+        "mrr": 0.5254,
+        "map": 0.5079,
+        "mean_seconds": 0.0311
+      },
+      "hybrid": {
+        "n": 85,
+        "top1": 0.4235,
+        "top5": 0.6824,
+        "top10": 0.8118,
+        "mrr": 0.5469,
+        "map": 0.5302,
+        "mean_seconds": 0.0001
+      }
+    },
+    "pandas": {
+      "bm25": {
+        "n": 132,
+        "top1": 0.1364,
+        "top5": 0.4697,
+        "top10": 0.697,
+        "mrr": 0.314,
+        "map": 0.3068,
+        "mean_seconds": 0.7932
+      },
+      "dense": {
+        "n": 132,
+        "top1": 0.2348,
+        "top5": 0.5303,
+        "top10": 0.6818,
+        "mrr": 0.3808,
+        "map": 0.3671,
+        "mean_seconds": 0.3147
+      },
+      "hybrid": {
+        "n": 132,
+        "top1": 0.2803,
+        "top5": 0.6591,
+        "top10": 0.803,
+        "mrr": 0.4403,
+        "map": 0.4272,
+        "mean_seconds": 0.0182
+      }
+    },
+    "requests": {
+      "bm25": {
+        "n": 120,
+        "top1": 0.3083,
+        "top5": 0.6417,
+        "top10": 0.8,
+        "mrr": 0.4652,
+        "map": 0.4562,
+        "mean_seconds": 0.045
+      },
+      "dense": {
+        "n": 120,
+        "top1": 0.2583,
+        "top5": 0.5917,
+        "top10": 0.7417,
+        "mrr": 0.4054,
+        "map": 0.3916,
+        "mean_seconds": 0.0331
+      },
+      "hybrid": {
+        "n": 120,
+        "top1": 0.2833,
+        "top5": 0.7083,
+        "top10": 0.8,
+        "mrr": 0.461,
+        "map": 0.4528,
+        "mean_seconds": 0.0001
+      }
+    }
+  }
+}

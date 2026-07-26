@@ -19,6 +19,7 @@ from rich.table import Table
 from buglocalizer import __version__
 from buglocalizer.config import Config, load_config
 from buglocalizer.dataset import (
+    HELDOUT,
     Example,
     assign_temporal_split,
     examples_path,
@@ -29,7 +30,7 @@ from buglocalizer.dataset import (
 )
 from buglocalizer.logging_setup import configure_logging
 from buglocalizer.mining import ensure_repo, mine_repo
-from buglocalizer.reporting import render_samples, render_stats, run_retrieval_demo
+from buglocalizer.reporting import render_eval, render_samples, render_stats, run_retrieval_demo
 
 app = typer.Typer(
     name="bugloc",
@@ -186,6 +187,14 @@ def index(
             "Much cheaper: neighbouring commits share blobs, a spread-out sample does not.",
         ),
     ] = False,
+    include_tests: Annotated[
+        bool,
+        typer.Option(
+            "--include-tests",
+            help="Index the WIDE corpus scope (tests included). This is a superset of "
+            "the default scope, so one wide build serves evaluation at both scopes.",
+        ),
+    ] = False,
     force: Annotated[bool, typer.Option("--force", help="Re-index covered commits.")] = False,
 ) -> None:
     """Embed each example's parent commit into Postgres/pgvector."""
@@ -195,6 +204,8 @@ def index(
     from buglocalizer.indexing.store import init_schema
 
     cfg = _load(config)
+    if include_tests:
+        cfg.corpus.include_tests = True
     init_schema(cfg)
     examples = _select(cfg, split, repo, limit, cfg.seed, newest=newest)
     if not examples:
@@ -278,10 +289,98 @@ def retrieve(
 
 
 @app.command("eval")
-def eval_cmd(config: ConfigOpt = Path("config.yaml")) -> None:
-    """Run the full evaluation and print the comparison table."""
-    _load(config)
-    _not_yet("Milestone 3", "the evaluation harness")
+def eval_cmd(
+    config: ConfigOpt = Path("config.yaml"),
+    split: Annotated[str, typer.Option("--split", help="'heldout' or 'dev'.")] = "heldout",
+    repo: Annotated[list[str] | None, typer.Option("--repo", "-r")] = None,
+    limit: Annotated[int | None, typer.Option("--limit")] = None,
+    scopes: Annotated[
+        str,
+        typer.Option(
+            "--scopes",
+            help="'both' (default), 'narrow' (tests excluded), or 'wide' (tests included).",
+        ),
+    ] = "both",
+    label: Annotated[str, typer.Option("--label", help="Note recorded with the run.")] = "",
+) -> None:
+    """Evaluate BM25 vs dense vs hybrid and write results/<timestamp>.json."""
+    from buglocalizer.eval.harness import evaluate
+    from buglocalizer.eval.results import (
+        peek_count,
+        record_heldout_peek,
+        render_markdown,
+        run_to_dict,
+        save_results,
+    )
+    from buglocalizer.indexing.embedder import get_embedder
+    from buglocalizer.indexing.store import connect
+
+    cfg = _load(config)
+    examples = _select(cfg, split, repo, limit, cfg.seed)
+    if not examples:
+        console.print(f"[red]no examples in split {split!r}[/]")
+        raise typer.Exit(code=1)
+
+    wanted = {"both": [False, True], "narrow": [False], "wide": [True]}.get(scopes)
+    if wanted is None:
+        console.print("[red]--scopes must be one of: both, narrow, wide[/]")
+        raise typer.Exit(code=1)
+
+    if split == HELDOUT:
+        console.print(
+            f"[yellow]held-out evaluation[/] — this will be peek "
+            f"#{peek_count(cfg) + 1} in {cfg.paths.results_dir}/heldout_log.jsonl"
+        )
+
+    from buglocalizer.indexing.store import covered_commits
+
+    embedder = get_embedder(cfg)
+    payloads: list[dict] = []
+    with connect(cfg) as conn:
+        # Comparing corpus scopes is only meaningful if both scopes score the
+        # SAME examples. The wide scope is more expensive to index, so it always
+        # covers fewer commits; without this intersection the two columns would
+        # be computed over different example sets and the delta between them
+        # would conflate scope with sample.
+        if len(wanted) > 1:
+            common = set.intersection(*(covered_commits(conn, s) for s in wanted))
+            before = len(examples)
+            examples = [e for e in examples if (e.repo, e.parent_sha) in common]
+            if len(examples) < before:
+                console.print(
+                    f"[yellow]restricted to {len(examples):,} of {before:,} examples[/] "
+                    f"covered at every requested scope, so the scopes are comparable"
+                )
+            if not examples:
+                console.print("[red]no examples are indexed at all requested scopes[/]")
+                raise typer.Exit(code=1)
+
+        for include_tests in wanted:
+            cfg.corpus.include_tests = include_tests
+            scope_name = "tests included" if include_tests else "tests excluded"
+            console.print(f"\n[bold]evaluating {len(examples):,} examples — {scope_name}[/]")
+            run = evaluate(cfg, examples, conn, embedder)
+            if run.n_examples == 0:
+                console.print(
+                    f"[red]nothing evaluated at scope '{scope_name}' — "
+                    f"{run.skipped_unindexed:,} examples had no index coverage. "
+                    f"Run `bugloc index"
+                    f"{' --include-tests' if include_tests else ''}` first.[/]"
+                )
+                raise typer.Exit(code=1)
+            payloads.append(run_to_dict(cfg, run, split, label))
+            render_eval(console, payloads[-1])
+
+    for payload in payloads:
+        path = save_results(cfg, payload)
+        console.print(f"[green]wrote[/] {path}")
+        if split == HELDOUT:
+            n = record_heldout_peek(cfg, payload, path)
+            console.print(f"  held-out peek count is now [bold]{n}[/]")
+
+    md = cfg.paths.results_dir / "latest.md"
+    md.write_text(render_markdown(payloads))
+    console.print(f"[green]wrote[/] {md}")
 
 
 if __name__ == "__main__":

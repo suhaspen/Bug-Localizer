@@ -70,7 +70,9 @@ def index_examples(cfg: Config, examples: list[Example], force: bool = False) ->
 
             for n, ex in enumerate(group, 1):
                 stats.commits_seen += 1
-                if not force and is_commit_indexed(conn, repo, ex.parent_sha):
+                if not force and is_commit_indexed(
+                    conn, repo, ex.parent_sha, cfg.corpus.include_tests
+                ):
                     stats.commits_skipped += 1
                     continue
 
@@ -86,7 +88,7 @@ def index_examples(cfg: Config, examples: list[Example], force: bool = False) ->
                     contents = read_blobs(repo_dir, todo)
                     _embed_and_store(conn, cfg, embedder, repo, contents, stats)
 
-                mark_commit_indexed(conn, repo, ex.parent_sha, len(files))
+                mark_commit_indexed(conn, repo, ex.parent_sha, len(files), cfg.corpus.include_tests)
                 conn.commit()
 
                 if n % 25 == 0 or n == len(group):

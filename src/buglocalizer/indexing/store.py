@@ -58,6 +58,14 @@ CREATE TABLE IF NOT EXISTS indexed_commit (
     indexed_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (repo, commit_sha)
 );
+
+-- Coverage depends on the corpus scope it was built at. include_tests=true
+-- embeds a superset of the default scope, so one wide build serves both evals --
+-- but without recording which scope was used, a later wider run would see the
+-- commit marked "indexed" and skip it, silently leaving test files unembedded
+-- and dense retrieval scoring them all at -1.
+ALTER TABLE indexed_commit
+    ADD COLUMN IF NOT EXISTS include_tests boolean NOT NULL DEFAULT false;
 """
 
 
@@ -106,20 +114,41 @@ def insert_blob_with_chunks(
             cp.write_row([repo, blob_sha, ch.idx, ch.start, ch.end, emb])
 
 
-def mark_commit_indexed(conn, repo: str, commit_sha: str, n_files: int) -> None:
+def mark_commit_indexed(
+    conn, repo: str, commit_sha: str, n_files: int, include_tests: bool
+) -> None:
+    """Record coverage, never narrowing it.
+
+    `include_tests` is OR-ed rather than overwritten: once a commit has been
+    indexed at the wide scope it stays covered for both, even if a later
+    default-scope run touches it.
+    """
     conn.execute(
-        "INSERT INTO indexed_commit (repo, commit_sha, n_files) VALUES (%s, %s, %s) "
+        "INSERT INTO indexed_commit (repo, commit_sha, n_files, include_tests) "
+        "VALUES (%s, %s, %s, %s) "
         "ON CONFLICT (repo, commit_sha) DO UPDATE SET n_files = EXCLUDED.n_files, "
-        "indexed_at = now()",
-        (repo, commit_sha, n_files),
+        "indexed_at = now(), "
+        "include_tests = indexed_commit.include_tests OR EXCLUDED.include_tests",
+        (repo, commit_sha, n_files, include_tests),
     )
 
 
-def is_commit_indexed(conn, repo: str, commit_sha: str) -> bool:
+def is_commit_indexed(conn, repo: str, commit_sha: str, include_tests: bool) -> bool:
+    """Covered only if indexed at a scope at least as wide as the one requested."""
     row = conn.execute(
-        "SELECT 1 FROM indexed_commit WHERE repo = %s AND commit_sha = %s", (repo, commit_sha)
+        "SELECT 1 FROM indexed_commit WHERE repo = %s AND commit_sha = %s "
+        "AND (include_tests OR NOT %s)",
+        (repo, commit_sha, include_tests),
     ).fetchone()
     return row is not None
+
+
+def covered_commits(conn, include_tests: bool) -> set[tuple[str, str]]:
+    rows = conn.execute(
+        "SELECT repo, commit_sha FROM indexed_commit WHERE (include_tests OR NOT %s)",
+        (include_tests,),
+    ).fetchall()
+    return {(r[0], r[1]) for r in rows}
 
 
 def load_blob_contents(conn, repo: str, blob_shas: list[str]) -> dict[str, str]:

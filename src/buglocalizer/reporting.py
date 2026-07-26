@@ -255,6 +255,70 @@ def heldout_only(examples: list[Example]) -> list[Example]:
     return [e for e in examples if e.split == HELDOUT]
 
 
+def _metrics_table(title: str, scores: dict, subtitle: str = "") -> Table:
+    table = Table(title=title + (f"\n[dim]{subtitle}[/]" if subtitle else ""), title_justify="left")
+    table.add_column("method")
+    for col in ("top-1", "top-5", "top-10", "MRR", "MAP"):
+        table.add_column(col, justify="right")
+
+    keys = ["top1", "top5", "top10", "mrr", "map"]
+    best = {k: max((s.get(k, 0.0) for s in scores.values()), default=0.0) for k in keys}
+    for method in ("bm25", "dense", "hybrid"):
+        if method not in scores:
+            continue
+        s = scores[method]
+        cells = []
+        for k in keys:
+            v = s.get(k, 0.0)
+            cells.append(f"[bold green]{v:.3f}[/]" if v == best[k] and v > 0 else f"{v:.3f}")
+        table.add_row(method, *cells)
+    return table
+
+
+def render_eval(console: Console, payload: dict) -> None:
+    """Print one scope's results: composition first, then aggregate, then per repo."""
+    scope = "tests INCLUDED (harder)" if payload["config"]["include_tests"] else "tests excluded"
+
+    comp = Table(title=f"Eval set composition — corpus scope: {scope}", title_justify="left")
+    comp.add_column("repo")
+    comp.add_column("examples", justify="right")
+    comp.add_column("share of aggregate", justify="right")
+    for c in payload["composition"]:
+        comp.add_row(
+            c["repo"],
+            f"{c['n']:,}",
+            f"{100 * c['share']:.1f}%",
+            style="bold yellow" if c["share"] >= 0.5 else None,
+        )
+    console.print(comp)
+
+    dominant = max(payload["composition"], key=lambda c: c["share"])
+    if dominant["share"] >= 0.5:
+        console.print(
+            Panel(
+                f"The aggregate below is [bold]{100 * dominant['share']:.0f}% "
+                f"{dominant['repo']}[/]. Read it as a {dominant['repo']} number that "
+                f"other repos nudge, not as a cross-repo result. The per-repo tables "
+                f"are the ones that support per-repo claims.",
+                border_style="yellow",
+                title="[yellow]aggregate composition warning[/]",
+            )
+        )
+
+    console.print(
+        _metrics_table(
+            "Aggregate",
+            payload["overall"],
+            f"{payload['n_examples']:,} examples · mean "
+            f"{payload['mean_candidates']:.0f} candidate files/query",
+        )
+    )
+    for repo, scores in payload["per_repo"].items():
+        n = next(iter(scores.values()))["n"]
+        console.print(_metrics_table(f"{repo}", scores, f"n={n}"))
+    console.print()
+
+
 def run_retrieval_demo(console: Console, cfg, example: Example, method: str, k: int) -> None:
     """Run retrieval for one example and show the ranking against ground truth.
 

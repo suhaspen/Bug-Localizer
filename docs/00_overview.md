@@ -163,8 +163,39 @@ Full treatment in `docs/03_evaluation.md`.
 
 ## Headline results
 
-*Not yet available — Milestone 3 produces the comparison table. This section will
-hold the top-1/5/10 numbers for BM25 vs dense vs hybrid vs rerank.*
+**337 held-out examples** (flask 85, pandas 132, requests 120), temporal split,
+evaluated at two corpus scopes.
+
+**Default scope — non-test source only, ~141 candidate files per query:**
+
+| method | top-1 | top-5 | top-10 | MRR | MAP |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| BM25 | 0.406 | 0.760 | 0.843 | 0.557 | 0.546 |
+| dense | 0.341 | 0.685 | 0.834 | 0.497 | 0.482 |
+| **hybrid (RRF)** | **0.415** | **0.768** | **0.872** | **0.575** | **0.564** |
+
+**Whole-repo search — tests included, ~633 candidate files per query:**
+
+| method | top-1 | top-5 | top-10 | MRR | MAP |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| BM25 | 0.255 | 0.582 | 0.751 | 0.416 | 0.409 |
+| dense | 0.285 | 0.582 | 0.721 | 0.426 | 0.411 |
+| **hybrid (RRF)** | **0.318** | **0.682** | **0.804** | **0.474** | **0.462** |
+
+Three things to take from this:
+
+1. **Hybrid wins**, on 9 of 10 aggregate cells and consistently across repos. In
+   the default scope a developer handed ten files finds a faulty one 87% of the
+   time.
+2. **BM25 beats dense while the corpus is easy, and loses when it isn't.** Add
+   test files and BM25 drops 15.1 points of top-1 against dense's 5.6 — because a
+   test named `test_send_file_mimetype` is the single best keyword match for a
+   `send_file` mimetype bug, and never a correct answer. Dense retrieval's value
+   here turns out to be robustness to distractors, not raw recall.
+3. **It doesn't always work.** On requests, hybrid does not beat BM25.
+
+Full interpretation, including what these numbers do *not* say, is in
+`docs/03_evaluation.md`.
 
 ---
 
@@ -284,3 +315,36 @@ how *clustered in time* the commits are, not just how many. A random 150-example
 pandas sample spanning 2021–2026 barely cached at all; the 120 newest examples
 ran at a **98% hit rate and 59.7x saving**. Indexing the full held-out set should
 be ordered accordingly.
+
+### Milestone 3 — Evaluation harness and baseline numbers
+
+The resume-critical milestone: metrics, a comparison table, and the honest
+context around it. Headline numbers are above; full treatment in
+`docs/03_evaluation.md`.
+
+What the milestone added:
+
+- **Three metrics** — top-1/5/10 accuracy, MRR, MAP — as pure functions with no
+  git, database or model dependency, each checked against values computed by
+  hand in a test. A metric bug doesn't crash; it shifts every published number by
+  a plausible amount, so this is the one module that had to be provably right.
+- **RRF hybrid fusion**, which combines the two rankings by position rather than
+  score (BM25 scores are unbounded and corpus-dependent; cosine lives in [-1,1],
+  so adding them is meaningless).
+- **Both corpus scopes, over identical examples.** The wide scope is costlier to
+  index and therefore covers fewer commits; without restricting to the
+  intersection, the scope delta would have conflated scope with sample.
+- **Composition-first reporting.** Every aggregate is preceded by its per-repo
+  makeup, with a warning when any repo exceeds 50%.
+- **A held-out peek ledger** at `results/heldout_log.jsonl`. Three peeks so far,
+  the first a deliberately-retained flask-only smoke test.
+- **128 passing tests.**
+
+**An estimation lesson worth keeping.** I projected the wide-scope pandas index
+at ~1.6 h, then watched the first commits run at 1/minute and revised to ~5 h,
+and cut the eval set accordingly. The actual build took **17 minutes**. Both
+estimates were wrong in the same way: the first commit of any run is a cold-start
+full tree, and extrapolating from it wildly overstates the incremental cost —
+181,148 file instances collapsed to 1,008 blobs, a 179.7x saving that only shows
+up after the cache warms. The cut to 337 examples was therefore more conservative
+than it needed to be.
