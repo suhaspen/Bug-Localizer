@@ -301,9 +301,12 @@ def eval_cmd(
             help="'both' (default), 'narrow' (tests excluded), or 'wide' (tests included).",
         ),
     ] = "both",
+    rerank: Annotated[
+        bool, typer.Option("--rerank", help="Add cross-encoder reranking of the hybrid shortlist.")
+    ] = False,
     label: Annotated[str, typer.Option("--label", help="Note recorded with the run.")] = "",
 ) -> None:
-    """Evaluate BM25 vs dense vs hybrid and write results/<timestamp>.json."""
+    """Evaluate BM25 vs dense vs hybrid (optionally + rerank) and save results."""
     from buglocalizer.eval.harness import evaluate
     from buglocalizer.eval.results import (
         peek_count,
@@ -316,6 +319,8 @@ def eval_cmd(
     from buglocalizer.indexing.store import connect
 
     cfg = _load(config)
+    if rerank:
+        cfg.rerank.enabled = True
     examples = _select(cfg, split, repo, limit, cfg.seed)
     if not examples:
         console.print(f"[red]no examples in split {split!r}[/]")
@@ -368,15 +373,19 @@ def eval_cmd(
                     f"{' --include-tests' if include_tests else ''}` first.[/]"
                 )
                 raise typer.Exit(code=1)
-            payloads.append(run_to_dict(cfg, run, split, label))
-            render_eval(console, payloads[-1])
+            payload = run_to_dict(cfg, run, split, label)
+            payloads.append(payload)
+            render_eval(console, payload)
 
-    for payload in payloads:
-        path = save_results(cfg, payload)
-        console.print(f"[green]wrote[/] {path}")
-        if split == HELDOUT:
-            n = record_heldout_peek(cfg, payload, path)
-            console.print(f"  held-out peek count is now [bold]{n}[/]")
+            # Persist as soon as a scope finishes rather than after all of them.
+            # The wide scope takes hours, and losing a completed narrow-scope
+            # run because the process died during the next one is an avoidable
+            # way to throw away real work.
+            path = save_results(cfg, payload)
+            console.print(f"[green]wrote[/] {path}")
+            if split == HELDOUT:
+                n = record_heldout_peek(cfg, payload, path)
+                console.print(f"  held-out peek count is now [bold]{n}[/]")
 
     md = cfg.paths.results_dir / "latest.md"
     md.write_text(render_markdown(payloads))

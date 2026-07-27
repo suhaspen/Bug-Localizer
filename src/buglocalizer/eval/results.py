@@ -17,6 +17,7 @@ from pathlib import Path
 
 from buglocalizer.config import Config
 from buglocalizer.eval.harness import K_VALUES, METHODS, EvalRun
+from buglocalizer.eval.metrics import mcnemar, unpaired_se
 
 PEEK_LOG = "heldout_log.jsonl"
 
@@ -59,7 +60,13 @@ def run_to_dict(cfg: Config, run: EvalRun, split: str, label: str) -> dict:
             "rrf_k": cfg.retrieval.rrf_k,
             "seed": cfg.seed,
             "dev_fraction": cfg.split.dev_fraction,
+            "rerank_enabled": cfg.rerank.enabled,
+            "rerank_model": cfg.rerank.model if cfg.rerank.enabled else None,
+            "rerank_top_n": cfg.rerank.top_n if cfg.rerank.enabled else None,
+            "rerank_chunks_per_file": cfg.rerank.chunks_per_file if cfg.rerank.enabled else None,
         },
+        "shortlist_ceiling": round(run.shortlist_ceiling, 4) if run.rerank_top_n else None,
+        "rerank_top_n": run.rerank_top_n or None,
         "n_examples": run.n_examples,
         "skipped_unindexed": run.skipped_unindexed,
         "mean_candidates": round(run.mean_candidates, 1),
@@ -68,11 +75,43 @@ def run_to_dict(cfg: Config, run: EvalRun, split: str, label: str) -> dict:
             {"repo": r, "n": n, "share": round(share, 4)} for r, n, share in run.composition()
         ],
         "overall": {m: run.overall[m].as_dict() for m in METHODS if m in run.overall},
+        "paired": _paired_comparisons(run),
         "per_repo": {
             repo: {m: scores[m].as_dict() for m in METHODS if m in scores}
             for repo, scores in sorted(run.per_repo.items())
         },
     }
+
+
+# The comparisons that actually carry the argument: does fusion beat its best
+# component, and does the expensive reranker beat what it reranks?
+_PAIRS = [("hybrid", "bm25"), ("hybrid", "dense"), ("rerank", "hybrid"), ("rerank", "bm25")]
+
+
+def _paired_comparisons(run: EvalRun) -> list[dict]:
+    out: list[dict] = []
+    for a, b in _PAIRS:
+        if a not in run.overall or b not in run.overall:
+            continue
+        for k in K_VALUES:
+            stats = mcnemar(run.overall[a].flags[k], run.overall[b].flags[k])
+            out.append(
+                {
+                    "a": a,
+                    "b": b,
+                    "k": k,
+                    "a_acc": round(run.overall[a].top_k(k), 4),
+                    "b_acc": round(run.overall[b].top_k(k), 4),
+                    "delta": round(stats["delta"], 4),
+                    "a_only": stats["a_only"],
+                    "b_only": stats["b_only"],
+                    "paired_se": round(stats["se"], 4),
+                    "z": round(stats["z"], 2),
+                    "significant_5pct": abs(stats["z"]) > 1.96,
+                    "unpaired_se_a": round(unpaired_se(run.overall[a].top_k(k), run.n_examples), 4),
+                }
+            )
+    return out
 
 
 def save_results(cfg: Config, payload: dict) -> Path:
@@ -139,7 +178,16 @@ def render_markdown(payloads: list[dict]) -> str:
         ]
         for c in payload["composition"]:
             lines.append(f"| {c['repo']} | {c['n']:,} | {100 * c['share']:.1f}% |")
+        if payload.get("shortlist_ceiling") is not None:
+            lines += [
+                "",
+                f"Rerank shortlist: top-{payload['rerank_top_n']} of hybrid. Hybrid's "
+                f"top-{payload['rerank_top_n']} accuracy is **{payload['shortlist_ceiling']:.3f}** "
+                f"— a hard ceiling, since reranking can only reorder what the shortlist contains.",
+            ]
         lines += ["", "### Aggregate", "", _table(payload["overall"]), ""]
+        if payload.get("paired"):
+            lines += ["", "#### Paired comparisons (McNemar)", "", _paired_table(payload), ""]
         for repo, scores in payload["per_repo"].items():
             n = next(iter(scores.values()))["n"]
             lines += [f"### {repo} (n={n})", "", _table(scores), ""]
@@ -166,6 +214,23 @@ def _table(scores: dict) -> str:
             v = s.get(col, 0.0)
             cells.append(f"**{v:.3f}**" if v == best[col] and v > 0 else f"{v:.3f}")
         rows.append(f"| {method} | " + " | ".join(cells) + " |")
+    return "\n".join(rows)
+
+
+def _paired_table(payload: dict) -> str:
+    rows = [
+        "Both methods scored the same examples, so only the disagreements carry "
+        "information. `A only` counts examples A found and B missed.",
+        "",
+        "| comparison | k | A | B | delta | A only | B only | paired SE | z | sig. 5% |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |",
+    ]
+    for c in payload["paired"]:
+        rows.append(
+            f"| {c['a']} vs {c['b']} | {c['k']} | {c['a_acc']:.3f} | {c['b_acc']:.3f} "
+            f"| {c['delta']:+.3f} | {c['a_only']} | {c['b_only']} | {c['paired_se']:.4f} "
+            f"| {c['z']:+.2f} | {'yes' if c['significant_5pct'] else 'no'} |"
+        )
     return "\n".join(rows)
 
 

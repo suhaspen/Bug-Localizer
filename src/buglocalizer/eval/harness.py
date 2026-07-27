@@ -22,7 +22,7 @@ from buglocalizer.retrieval.hybrid import rrf_fuse
 
 log = get_logger(__name__)
 
-METHODS = ["bm25", "dense", "hybrid"]
+METHODS = ["bm25", "dense", "hybrid", "rerank"]
 K_VALUES = [1, 5, 10]
 
 
@@ -35,11 +35,17 @@ class MethodScores:
     rr_sum: float = 0.0
     ap_sum: float = 0.0
     seconds: float = 0.0
+    # Per-example hit/miss, kept so methods can be compared *paired* rather than
+    # as two independent accuracies. Both methods saw the same bug reports, and
+    # ignoring that discards most of the statistical power.
+    flags: dict[int, list[bool]] = field(default_factory=lambda: {k: [] for k in K_VALUES})
 
     def add(self, ranked: list[str], gold: list[str], seconds: float) -> None:
         self.n += 1
         for k in K_VALUES:
-            if hit_at_k(ranked, gold, k):
+            hit = hit_at_k(ranked, gold, k)
+            self.flags[k].append(hit)
+            if hit:
                 self.hits[k] += 1
         self.rr_sum += reciprocal_rank(ranked, gold)
         self.ap_sum += average_precision(ranked, gold)
@@ -78,6 +84,15 @@ class EvalRun:
     mean_candidates: float = 0.0
     seconds: float = 0.0
     skipped_unindexed: int = 0
+    # Hybrid's accuracy at the rerank depth. Reranking can only reorder the
+    # shortlist, so this is a hard ceiling on what it can achieve — a rerank
+    # gain is only interpretable against the headroom it actually had.
+    rerank_top_n: int = 0
+    shortlist_hits: int = 0
+
+    @property
+    def shortlist_ceiling(self) -> float:
+        return self.shortlist_hits / self.n_examples if self.n_examples else 0.0
 
     def composition(self) -> list[tuple[str, int, float]]:
         """Per-repo share of the eval set — printed so no aggregate reads as
@@ -102,6 +117,13 @@ def evaluate(
     t0 = time.perf_counter()
     candidate_total = 0
 
+    reranker = None
+    if cfg.rerank.enabled:
+        from buglocalizer.retrieval.rerank import get_reranker, rerank
+
+        reranker = get_reranker(cfg)
+        run.rerank_top_n = cfg.rerank.top_n
+
     # Commit order keeps the tokenised-blob cache warm: neighbouring commits
     # share nearly their whole tree.
     ordered = sorted(examples, key=lambda e: (e.repo, e.authored_at, e.fix_sha))
@@ -124,12 +146,31 @@ def evaluate(
         sparse = bm25_search(
             cfg, ex.example_id, ex.query_text, files, contents, token_cache=token_cache
         )
-        dense = dense_search(cfg, conn, ex.repo, ex.example_id, ex.query_text, files, embedder)
+        query_vec = embedder.encode_one(ex.query_text)
+        dense = dense_search(
+            cfg,
+            conn,
+            ex.repo,
+            ex.example_id,
+            ex.query_text,
+            files,
+            embedder,
+            query_vec=query_vec,
+        )
         hybrid = rrf_fuse([sparse, dense], k=cfg.retrieval.rrf_k, example_id=ex.example_id)
+
+        results: list[tuple[str, object]] = [("bm25", sparse), ("dense", dense), ("hybrid", hybrid)]
+        if reranker is not None:
+            reranked = rerank(
+                cfg, conn, ex.repo, ex.query_text, hybrid, contents, query_vec, reranker
+            )
+            results.append(("rerank", reranked))
+            if hit_at_k(hybrid.paths(), ex.gold_files, cfg.rerank.top_n):
+                run.shortlist_hits += 1
 
         run.n_examples += 1
         run.repo_counts[ex.repo] = run.repo_counts.get(ex.repo, 0) + 1
-        for name, result in (("bm25", sparse), ("dense", dense), ("hybrid", hybrid)):
+        for name, result in results:
             per_repo = run.per_repo.setdefault(ex.repo, {})
             per_repo.setdefault(name, MethodScores()).add(
                 result.paths(), ex.gold_files, result.seconds
@@ -139,14 +180,19 @@ def evaluate(
             )
 
         if i % progress_every == 0:
+            extra = (
+                f" | rerank {run.overall['rerank'].top_k(10):.3f}"
+                if "rerank" in run.overall
+                else ""
+            )
             log.info(
-                "%d/%d evaluated | bm25 top10 %.3f | dense top10 %.3f | hybrid top10 %.3f "
-                "| token cache %.0f%%",
+                "%d/%d | bm25 top10 %.3f | dense %.3f | hybrid %.3f%s | token cache %.0f%%",
                 i,
                 len(ordered),
                 run.overall["bm25"].top_k(10),
                 run.overall["dense"].top_k(10),
                 run.overall["hybrid"].top_k(10),
+                extra,
                 100 * token_cache.hit_rate,
             )
 

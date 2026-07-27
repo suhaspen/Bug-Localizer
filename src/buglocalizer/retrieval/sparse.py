@@ -34,11 +34,17 @@ class TokenCache:
 
     Tokenisation dominates sparse retrieval cost, and consecutive examples share
     nearly their whole tree, so the hit rate is very high when examples are
-    processed in commit order. Bounded because holding every tokenised blob
-    would run to hundreds of MB.
+    processed in commit order.
+
+    The bound matters more than it looks. A pandas commit at the wide corpus
+    scope has ~1,400 files, so the cache must hold at least one commit's worth to
+    be useful at all — but holding several thousand tokenised blobs runs to
+    hundreds of MB, and on a memory-pressured machine that is the difference
+    between an eval that runs and one that gets paged out and crawls. 1,536 is
+    one wide pandas tree plus headroom.
     """
 
-    def __init__(self, maxsize: int = 4096):
+    def __init__(self, maxsize: int = 1536):
         self.maxsize = maxsize
         self._data: OrderedDict[str, list[str]] = OrderedDict()
         self.hits = 0

@@ -263,7 +263,7 @@ def _metrics_table(title: str, scores: dict, subtitle: str = "") -> Table:
 
     keys = ["top1", "top5", "top10", "mrr", "map"]
     best = {k: max((s.get(k, 0.0) for s in scores.values()), default=0.0) for k in keys}
-    for method in ("bm25", "dense", "hybrid"):
+    for method in ("bm25", "dense", "hybrid", "rerank"):
         if method not in scores:
             continue
         s = scores[method]
@@ -305,14 +305,38 @@ def render_eval(console: Console, payload: dict) -> None:
             )
         )
 
-    console.print(
-        _metrics_table(
-            "Aggregate",
-            payload["overall"],
-            f"{payload['n_examples']:,} examples · mean "
-            f"{payload['mean_candidates']:.0f} candidate files/query",
-        )
+    subtitle = (
+        f"{payload['n_examples']:,} examples · mean "
+        f"{payload['mean_candidates']:.0f} candidate files/query"
     )
+    if payload.get("shortlist_ceiling") is not None:
+        subtitle += (
+            f"\nrerank shortlist = top-{payload['rerank_top_n']} of hybrid; "
+            f"ceiling {payload['shortlist_ceiling']:.3f}"
+        )
+    console.print(_metrics_table("Aggregate", payload["overall"], subtitle))
+    if payload.get("paired"):
+        pt = Table(
+            title="Paired comparisons (McNemar) — only disagreements carry information",
+            title_justify="left",
+        )
+        for col in ("comparison", "k", "delta", "A only", "B only", "paired SE", "z", "sig 5%"):
+            pt.add_column(col, justify="right" if col != "comparison" else "left")
+        for c in payload["paired"]:
+            sig = c["significant_5pct"]
+            pt.add_row(
+                f"{c['a']} vs {c['b']}",
+                str(c["k"]),
+                f"{c['delta']:+.3f}",
+                str(c["a_only"]),
+                str(c["b_only"]),
+                f"{c['paired_se']:.4f}",
+                f"{c['z']:+.2f}",
+                "yes" if sig else "no",
+                style="bold green" if sig and c["delta"] > 0 else ("red" if sig else "dim"),
+            )
+        console.print(pt)
+
     for repo, scores in payload["per_repo"].items():
         n = next(iter(scores.values()))["n"]
         console.print(_metrics_table(f"{repo}", scores, f"n={n}"))

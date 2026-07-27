@@ -94,6 +94,15 @@ class RetrievalConfig(_Strict):
         return v
 
 
+class RerankConfig(_Strict):
+    enabled: bool = False
+    model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    top_n: int = Field(default=25, ge=1)
+    chunks_per_file: int = Field(default=4, ge=1)
+    batch_size: int = Field(default=64, ge=1)
+    max_length: int = Field(default=512, ge=64)
+
+
 class DbConfig(_Strict):
     dsn: str = "postgresql://bugloc:bugloc@localhost:5433/bugloc"
 
@@ -110,6 +119,7 @@ class Config(_Strict):
     split: SplitConfig = Field(default_factory=SplitConfig)
     corpus: CorpusConfig = Field(default_factory=CorpusConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    rerank: RerankConfig = Field(default_factory=RerankConfig)
     db: DbConfig = Field(default_factory=DbConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 

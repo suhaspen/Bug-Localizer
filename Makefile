@@ -3,7 +3,7 @@ SHELL := /bin/bash
 UV := uv
 
 .PHONY: help setup setup-ml test lint fmt db-up db-down db-logs mine stats samples \
-        index index-stats retrieve eval eval-dev peeks clean
+        index index-stats retrieve eval eval-rerank eval-dev peeks clean
 
 help:  ## Show this help
 	@echo "Bug Localizer — available commands"
@@ -60,6 +60,9 @@ samples:  ## Print labeled examples for hand-review of label quality
 
 eval:  ## Evaluate BM25 vs dense vs hybrid, both corpus scopes (ARGS="--limit 100")
 	$(UV) run bugloc eval $(ARGS)
+
+eval-rerank:  ## Same, plus cross-encoder reranking of the hybrid shortlist
+	$(UV) run bugloc eval --rerank $(ARGS)
 
 eval-dev:  ## Same, on the dev split — use this for tuning, not held-out
 	$(UV) run bugloc eval --split dev $(ARGS)

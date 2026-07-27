@@ -9,13 +9,17 @@ lock the bug in.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from buglocalizer.eval.metrics import (
     average_precision,
     hit_at_k,
+    mcnemar,
     recall_at_k,
     reciprocal_rank,
+    unpaired_se,
 )
 from buglocalizer.retrieval.base import RetrievalResult, ScoredFile
 from buglocalizer.retrieval.hybrid import rrf_fuse
@@ -224,3 +228,60 @@ def test_rrf_is_deterministic_on_ties():
 
 def test_rrf_empty_input():
     assert rrf_fuse([]).ranked == []
+
+
+# --- paired significance -----------------------------------------------------
+
+
+def test_mcnemar_ignores_agreement():
+    """Examples both methods get right (or both wrong) carry no information.
+
+    This is the whole point of pairing: adding 1,000 examples that both methods
+    handle identically must not change the verdict.
+    """
+    a = [True, True, False, False]
+    b = [True, False, True, False]
+    base = mcnemar(a, b)
+    padded = mcnemar([*a, *[True] * 1000], [*b, *[True] * 1000])
+    assert base["a_only"] == padded["a_only"] == 1
+    assert base["b_only"] == padded["b_only"] == 1
+    assert base["z"] == padded["z"] == 0.0
+    # The *delta* does shrink, since it is a difference of accuracies over n.
+    assert abs(padded["delta"]) < abs(base["delta"]) or base["delta"] == 0
+
+
+def test_mcnemar_direction_and_magnitude():
+    """A wins 9 disagreements, B wins 1, over 100 examples."""
+    a = [True] * 9 + [False] * 1 + [True] * 90
+    b = [False] * 9 + [True] * 1 + [True] * 90
+    s = mcnemar(a, b)
+    assert s["a_only"] == 9 and s["b_only"] == 1
+    assert s["delta"] == pytest.approx(0.08)
+    assert s["se"] == pytest.approx(math.sqrt(10) / 100)
+    assert s["z"] == pytest.approx(8 / math.sqrt(10))
+    assert s["z"] > 1.96
+
+
+def test_mcnemar_paired_se_beats_unpaired_when_methods_agree():
+    """The reason to pair: agreement shrinks the error bar on the difference."""
+    a = [True] * 60 + [False] * 40
+    b = [True] * 58 + [False] * 2 + [False] * 40
+    paired = mcnemar(a, b)["se"]
+    assert paired < unpaired_se(0.60, 100)
+
+
+def test_mcnemar_identical_methods():
+    s = mcnemar([True, False, True], [True, False, True])
+    assert s["delta"] == 0.0 and s["z"] == 0.0 and s["se"] == 0.0
+
+
+def test_mcnemar_empty_and_mismatched():
+    assert mcnemar([], [])["z"] == 0.0
+    with pytest.raises(ValueError):
+        mcnemar([True], [True, False])
+
+
+def test_unpaired_se_shrinks_with_n():
+    assert unpaired_se(0.5, 100) == pytest.approx(0.05)
+    assert unpaired_se(0.5, 2235) == pytest.approx(0.0106, abs=1e-4)
+    assert unpaired_se(0.5, 0) == 0.0

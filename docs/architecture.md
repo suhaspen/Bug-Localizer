@@ -40,7 +40,8 @@ Bug Localizer/
 │   │   ├── base.py          # ScoredFile, RetrievalResult, tokenizer [M2]
 │   │   ├── sparse.py        # BM25 + tokenised-blob LRU cache       [M2]
 │   │   ├── dense.py         # pgvector cosine search                [M2]
-│   │   └── hybrid.py        # RRF fusion of ranked lists            [M3]
+│   │   ├── hybrid.py        # RRF fusion of ranked lists            [M3]
+│   │   └── rerank.py        # cross-encoder over a shortlist        [M4]
 │   └── eval/
 │       ├── metrics.py       # top-k, MRR, MAP — pure functions      [M3]
 │       ├── harness.py       # run all methods, accumulate scores    [M3]
@@ -52,8 +53,9 @@ Bug Localizer/
 │   ├── test_miner.py        # end-to-end mining on a real fixture repo
 │   ├── test_chunking.py     # chunk coverage/overlap + tokenizer
 │   ├── test_corpus.py       # corpus scope + BM25 on a fixture repo
-│   ├── test_metrics.py      # hand-computed metric + RRF values
-│   └── test_eval.py         # score accumulation, composition, ledger
+│   ├── test_metrics.py      # hand-computed metric + RRF + McNemar values
+│   ├── test_eval.py         # score accumulation, composition, ledger
+│   └── test_rerank.py       # shortlist boundary, max-over-chunks, tail
 ├── data/                    # examples.jsonl, splits (gitignored)
 ├── results/                 # eval runs (committed — this is the evidence)
 └── docs/                    # the knowledge base

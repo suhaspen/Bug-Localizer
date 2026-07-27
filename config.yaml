@@ -127,6 +127,22 @@ retrieval:
   # Reciprocal Rank Fusion constant; damps the influence of top-ranked outliers.
   rrf_k: 60
 
+rerank:
+  # A cross-encoder reads (query, code) TOGETHER rather than embedding each
+  # separately, so it is far more accurate and cannot be precomputed — every
+  # pair is a forward pass at query time. Measured at 180 pairs/s, which is what
+  # forces the shortlist to be small.
+  enabled: false
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  # Only the top N hybrid candidates get reranked, so hybrid's top-N accuracy is
+  # a hard ceiling on what reranking can achieve. Reported alongside the results.
+  top_n: 25
+  # Up to this many windows per candidate file, chosen as the file's most
+  # query-relevant chunks by cosine. A file scores as the max over its chunks.
+  chunks_per_file: 4
+  batch_size: 64
+  max_length: 512
+
 db:
   # Matches docker-compose.yml. Override with BUGLOC_DB_DSN.
   dsn: postgresql://bugloc:bugloc@localhost:5433/bugloc

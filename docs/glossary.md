@@ -139,18 +139,38 @@ dominate). Its virtue is needing no score calibration: BM25 scores are unbounded
 positive numbers and cosine similarities live in [-1, 1], so adding them directly
 is meaningless, whereas "ranked 3rd" means the same thing in both lists.
 
-**Cross-encoder** *(not yet used — Milestone 4)* — A model that takes the query
-and one document **together** as a single input and outputs a relevance score.
-Contrast with the **bi-encoder** used for dense retrieval, which embeds query and
-document *separately* and compares vectors. The cross-encoder is far more
-accurate, because it can attend to interactions between the two texts, but it
-cannot be precomputed — you must run the model once per (query, document) pair.
-Hence it is only affordable on a shortlist.
+**Cross-encoder** — A model that takes the query and one document **together** as
+a single input and outputs a relevance score. Contrast with the **bi-encoder**
+used for dense retrieval, which embeds query and document *separately* and
+compares vectors. A cross-encoder can attend to interactions between the two
+texts — that this exact identifier appears in both — which a bi-encoder
+structurally cannot, since each side is compressed before it sees the other. The
+price is that nothing can be precomputed: every (query, document) pair is a
+forward pass at query time. Measured here at 180 pairs/second.
 
-**Reranking** *(not yet used — Milestone 4)* — The two-stage pattern that follows
-from the above: a cheap retriever narrows thousands of files to ~50 candidates,
-then an expensive model reorders just those. You get most of the expensive
-model's quality at a small fraction of its cost.
+**Reranking** — The two-stage pattern that follows: a cheap retriever narrows
+hundreds of files to a shortlist, then an expensive model reorders just those.
+
+**Shortlist ceiling** — Because reranking only reorders the shortlist, the
+first-stage retriever's accuracy *at the shortlist depth* is a hard upper bound
+on what reranking can reach. If hybrid's top-25 is 0.93, no reranker can push
+top-10 past 0.93 from a top-25 shortlist. A rerank gain is only interpretable
+against the headroom it actually had, so this project reports the ceiling next to
+the result.
+
+**McNemar's test** — A paired significance test for two methods evaluated on the
+same examples. Examples both methods get right, or both get wrong, carry no
+information about which is better; only the disagreements do. The accuracy
+difference is `(a_only − b_only) / n` with standard error `sqrt(a_only + b_only)
+/ n`, which is typically much tighter than treating the two accuracies as
+independent samples. `z` is how many standard errors the difference sits from
+zero; |z| > 1.96 is the conventional 5% threshold.
+
+**MS MARCO** — A large dataset of web search queries paired with relevant
+passages, and the training data behind most off-the-shelf cross-encoders. Worth
+knowing because a model trained on natural-language web passages is being asked
+here to judge relevance between a bug report and Python source, which is a
+substantial domain shift.
 
 ---
 

@@ -46,12 +46,16 @@ def dense_search(
     files: list[CorpusFile],
     embedder,
     top_k: int | None = None,
+    query_vec=None,
 ) -> RetrievalResult:
     t0 = time.perf_counter()
     if not files:
         return RetrievalResult("dense", example_id, [], 0, time.perf_counter() - t0)
 
-    query_vec = embedder.encode_one(query_text)
+    # Reranking needs the same vector to pick each candidate's best windows, so
+    # the caller may pass it in rather than paying for a second forward pass.
+    if query_vec is None:
+        query_vec = embedder.encode_one(query_text)
     blob_shas = sorted({f.blob_sha for f in files})
 
     rows = conn.execute(_SQL, {"q": query_vec, "repo": repo, "blobs": blob_shas}).fetchall()

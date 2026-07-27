@@ -34,9 +34,14 @@ CREATE TABLE IF NOT EXISTS blob (
     repo      text   NOT NULL,
     blob_sha  text   NOT NULL,
     n_bytes   int    NOT NULL,
-    content   text   NOT NULL,
     PRIMARY KEY (repo, blob_sha)
 );
+
+-- File text was stored here originally, then found to be dead weight: every
+-- caller reads contents from git via `read_blobs` (one `cat-file --batch` per
+-- tree, ~80 ms), so the column was a second copy of the corpus that nothing
+-- queried. Dropping it frees ~20% of the database.
+ALTER TABLE blob DROP COLUMN IF EXISTS content;
 
 CREATE TABLE IF NOT EXISTS chunk (
     repo       text NOT NULL,
@@ -44,7 +49,7 @@ CREATE TABLE IF NOT EXISTS chunk (
     chunk_idx  int  NOT NULL,
     start_char int  NOT NULL,
     end_char   int  NOT NULL,
-    embedding  vector(%(dim)s) NOT NULL,
+    embedding  vector(VECTOR_DIM) NOT NULL,
     PRIMARY KEY (repo, blob_sha, chunk_idx),
     FOREIGN KEY (repo, blob_sha) REFERENCES blob(repo, blob_sha) ON DELETE CASCADE
 );
@@ -77,8 +82,12 @@ def connect(cfg: Config):
 
 
 def init_schema(cfg: Config) -> None:
+    # Plain string replacement rather than %-formatting: the schema carries
+    # explanatory comments, and a stray "20% of" in one of them is a valid
+    # `%o` conversion that blows up at load time.
+    ddl = SCHEMA.replace("VECTOR_DIM", str(cfg.retrieval.embedding_dim))
     with connect(cfg) as conn:
-        conn.execute(SCHEMA % {"dim": cfg.retrieval.embedding_dim})
+        conn.execute(ddl)
         conn.commit()
     log.info("schema ready (embedding dim %d)", cfg.retrieval.embedding_dim)
 
@@ -98,9 +107,8 @@ def insert_blob_with_chunks(
     conn, repo: str, blob_sha: str, content: str, chunks, embeddings
 ) -> None:
     conn.execute(
-        "INSERT INTO blob (repo, blob_sha, n_bytes, content) VALUES (%s, %s, %s, %s) "
-        "ON CONFLICT DO NOTHING",
-        (repo, blob_sha, len(content.encode()), content),
+        "INSERT INTO blob (repo, blob_sha, n_bytes) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+        (repo, blob_sha, len(content.encode())),
     )
     with (
         conn.cursor() as cur,
@@ -149,16 +157,6 @@ def covered_commits(conn, include_tests: bool) -> set[tuple[str, str]]:
         (include_tests,),
     ).fetchall()
     return {(r[0], r[1]) for r in rows}
-
-
-def load_blob_contents(conn, repo: str, blob_shas: list[str]) -> dict[str, str]:
-    if not blob_shas:
-        return {}
-    rows = conn.execute(
-        "SELECT blob_sha, content FROM blob WHERE repo = %s AND blob_sha = ANY(%s)",
-        (repo, blob_shas),
-    ).fetchall()
-    return dict(rows)
 
 
 def index_stats(conn) -> list[tuple]:

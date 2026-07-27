@@ -565,3 +565,97 @@ wide-scope run would see the commit marked "indexed", skip it, and leave every
 test file unembedded. Dense retrieval would then score those files at -1 and rank
 them last, producing a wide-scope number that looked plausible and was silently
 measuring an incomplete index.
+
+---
+
+## Milestone 4
+
+### D33 — Paired significance (McNemar), not two independent accuracies
+
+**Decision.** Method comparisons report a paired test: the accuracy difference,
+the count of examples each method won, a paired standard error, and `z`.
+
+**Alternatives.** Compare two accuracies using the usual `sqrt(p(1-p)/n)`.
+
+**Why.** Both methods score the *same* bug reports, and treating their accuracies
+as independent samples throws that away. Most examples are easy for both or hard
+for both and carry no information about which is better; all the signal is in the
+disagreements. McNemar uses only those, so its standard error
+`sqrt(a_only + b_only)/n` is typically far tighter than the unpaired one.
+
+This directly matters for the question this milestone had to answer. In
+Milestone 3 the hybrid gain (+2.9 points top-10) was described as "at the edge of
+what n=337 resolves" — which was true under the unpaired test but was the wrong
+test to have applied. The paired comparison gives a real answer at any n.
+
+### D34 — Shortlist depth 25, and report the ceiling
+
+**Decision.** Rerank the top 25 hybrid candidates, and report hybrid's top-25
+accuracy alongside the result.
+
+**Why.** Reranking can only reorder what the shortlist contains, so the
+first-stage accuracy at that depth is a hard ceiling. Publishing a rerank gain
+without it is uninterpretable: a small gain against a ceiling of 0.99 means the
+reranker did almost nothing with lots of headroom, and the same gain against a
+ceiling of 0.88 means it captured most of what was available.
+
+Depth 25 sits meaningfully above the top-10 we report — so a gold file at rank 20
+can still be rescued — while keeping cost at 100 pairs per query (~550 ms at the
+measured 180 pairs/s). Deeper raises the ceiling linearly in cost; shallower
+collapses toward hybrid's own top-10, at which point reranking cannot improve
+top-10 at all.
+
+### D35 — Each candidate is represented by its 4 most query-relevant chunks
+
+**Decision.** A candidate file is scored as the maximum cross-encoder score over
+up to 4 of its chunks, selected by cosine similarity to the query.
+
+**Alternatives.** The file's head; every chunk.
+
+**Why.** The model takes 512 tokens and our files run to 400 KB, so a file must
+be represented by *some* passage. Scoring every chunk is faithful and
+unaffordable — a pandas core file is ~117 chunks, so 25 candidates would be
+~2,900 pairs and 16 seconds per query. The file head is cheap and unbiased but
+may be 3,000 lines from the buggy function.
+
+Selecting by cosine points the reranker at the windows most likely to matter. The
+obvious objection — that this makes reranking dependent on dense retrieval — does
+not bias the *comparison*, because the selection happens within an
+already-chosen candidate and decides which part of that file to read, not which
+files compete. A BM25-only candidate gets its best windows chosen the same way.
+The real cost is that if the embedding model is bad at locating the relevant
+region inside a file, the reranker inherits that, and that is stated as a
+limitation rather than hidden.
+
+### D36 — Reranking preserves the full ranking
+
+**Decision.** The reranked shortlist is followed by the untouched tail, so the
+`rerank` method returns a ranking as long as `hybrid` did.
+
+**Why.** The eval computes top-1/5/10 over whatever list a method returns.
+Truncating at the shortlist depth would silently change what top-10 means for
+one method only, making its column incomparable with the others — and it would
+look like a small improvement rather than a bug.
+
+### D37 — `blob.content` dropped
+
+**Decision.** The corpus store no longer keeps file text.
+
+**Why.** Discovered while sizing the expanded index against a nearly full disk:
+nothing read the column. Every caller — indexing, retrieval, reranking — gets
+file contents from git via a single `cat-file --batch` per tree (~80 ms), which
+is fast enough that a second copy in Postgres bought nothing. Dropping it took
+the blob table from 104 MB to 1.6 MB and removed roughly 600 MB of projected
+growth.
+
+Worth recording as a reminder that a cache is only a cache if something reads it.
+
+### D38 — Schema DDL uses plain substitution, not `%`-formatting
+
+**Decision.** `init_schema` builds DDL with `.replace("VECTOR_DIM", ...)`.
+
+**Why.** A bug. The schema string carries explanatory comments, and adding one
+containing "20% of" made Python read `% o` as an octal conversion, so
+`SCHEMA % {...}` raised `TypeError` at startup. Any SQL string that mixes
+`%`-formatting with prose is one comment away from breaking; explicit
+substitution cannot be tripped by it.

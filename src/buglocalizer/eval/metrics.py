@@ -15,6 +15,7 @@ disagree about what counts, and the disagreement is the point:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 
 
@@ -66,6 +67,49 @@ def average_precision(ranked: Sequence[str], gold: Iterable[str]) -> float:
             hits += 1
             precision_sum += hits / i
     return precision_sum / len(gold_set)
+
+
+def mcnemar(a_hits: Sequence[bool], b_hits: Sequence[bool]) -> dict[str, float]:
+    """Paired comparison of two methods evaluated on the same examples.
+
+    Comparing two accuracies as if they were independent samples throws away the
+    fact that both methods saw the *same* bug reports. Most examples are either
+    easy for both or hard for both, and those carry no information about which
+    method is better — all the signal is in the disagreements.
+
+    McNemar's test uses only those: `a_only` is the count where A found a gold
+    file and B did not, `b_only` the reverse. The difference in accuracy is
+    (a_only - b_only) / n, and its standard error is sqrt(a_only + b_only) / n,
+    which is typically far smaller than the unpaired sqrt(p(1-p)/n).
+
+    Returns `z`, the number of standard errors the difference sits from zero.
+    |z| > 1.96 is the conventional 5% threshold.
+    """
+    if len(a_hits) != len(b_hits):
+        raise ValueError("paired comparison needs equal-length outcome vectors")
+    n = len(a_hits)
+    if n == 0:
+        return {"delta": 0.0, "a_only": 0, "b_only": 0, "se": 0.0, "z": 0.0}
+
+    a_only = sum(1 for x, y in zip(a_hits, b_hits, strict=True) if x and not y)
+    b_only = sum(1 for x, y in zip(a_hits, b_hits, strict=True) if y and not x)
+    discordant = a_only + b_only
+
+    return {
+        "delta": (a_only - b_only) / n,
+        "a_only": a_only,
+        "b_only": b_only,
+        "se": math.sqrt(discordant) / n if discordant else 0.0,
+        "z": (a_only - b_only) / math.sqrt(discordant) if discordant else 0.0,
+    }
+
+
+def unpaired_se(p: float, n: int) -> float:
+    """Standard error of a single accuracy — how much it would wobble on a
+    different sample of the same size."""
+    if n <= 0:
+        return 0.0
+    return math.sqrt(max(p * (1 - p), 0.0) / n)
 
 
 def recall_at_k(ranked: Sequence[str], gold: Iterable[str], k: int) -> float:
