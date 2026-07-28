@@ -172,6 +172,23 @@ knowing because a model trained on natural-language web passages is being asked
 here to judge relevance between a bug report and Python source, which is a
 substantial domain shift.
 
+**Domain shift** — When a model is applied to data drawn from a different
+distribution than it was trained on, and its learned notion of the task no longer
+transfers. The concrete case in this project: an MS MARCO cross-encoder has
+learned what makes a *web passage* relevant to a *search query*, and is being
+asked to judge what makes *Python source* relevant to a *bug report*. Different
+vocabulary, different structure, and a different meaning of "relevant" — an
+identifier match should outweigh a prose overlap, which nothing in its training
+taught it. Measured here as a 7-point drop in top-10 accuracy relative to the
+ranking it was given. The important discipline is scoping the conclusion to the
+model and domain tested, rather than to reranking in general.
+
+**Negative result** — A finding that an approach does *not* work. Useful when it
+is measured carefully enough to be trusted and diagnosed well enough to be
+actionable — here, that a general-domain reranker degrades code retrieval, which
+points at a code-trained reranker as the fix rather than at abandoning the
+two-stage pattern.
+
 ---
 
 ## Metrics

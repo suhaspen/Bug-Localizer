@@ -163,39 +163,62 @@ Full treatment in `docs/03_evaluation.md`.
 
 ## Headline results
 
-**337 held-out examples** (flask 85, pandas 132, requests 120), temporal split,
-evaluated at two corpus scopes.
-
-**Default scope — non-test source only, ~141 candidate files per query:**
+**1,308 held-out examples** (pandas 1,103, requests 120, flask 85), temporal
+split. Default corpus scope — non-test source, ~246 candidate files per query.
 
 | method | top-1 | top-5 | top-10 | MRR | MAP |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| BM25 | 0.406 | 0.760 | 0.843 | 0.557 | 0.546 |
-| dense | 0.341 | 0.685 | 0.834 | 0.497 | 0.482 |
-| **hybrid (RRF)** | **0.415** | **0.768** | **0.872** | **0.575** | **0.564** |
-
-**Whole-repo search — tests included, ~633 candidate files per query:**
-
-| method | top-1 | top-5 | top-10 | MRR | MAP |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| BM25 | 0.255 | 0.582 | 0.751 | 0.416 | 0.409 |
-| dense | 0.285 | 0.582 | 0.721 | 0.426 | 0.411 |
-| **hybrid (RRF)** | **0.318** | **0.682** | **0.804** | **0.474** | **0.462** |
+| BM25 | 0.394 | 0.723 | 0.828 | 0.539 | 0.509 |
+| dense | 0.325 | 0.689 | 0.819 | 0.487 | 0.455 |
+| **hybrid (RRF)** | **0.437** | **0.794** | **0.876** | **0.593** | **0.557** |
+| + cross-encoder rerank | 0.297 | 0.664 | 0.806 | 0.463 | 0.437 |
 
 Three things to take from this:
 
-1. **Hybrid wins**, on 9 of 10 aggregate cells and consistently across repos. In
-   the default scope a developer handed ten files finds a faulty one 87% of the
-   time.
-2. **BM25 beats dense while the corpus is easy, and loses when it isn't.** Add
-   test files and BM25 drops 15.1 points of top-1 against dense's 5.6 — because a
-   test named `test_send_file_mimetype` is the single best keyword match for a
-   `send_file` mimetype bug, and never a correct answer. Dense retrieval's value
-   here turns out to be robustness to distractors, not raw recall.
-3. **It doesn't always work.** On requests, hybrid does not beat BM25.
+**1. Hybrid fusion wins, and the advantage is statistically solid.** A developer
+handed ten files finds a genuinely faulty one **88% of the time**; the single best
+guess is right **44%** of the time. Against BM25 at top-5 the gain is +7.1 points
+(z = +6.73): of the 191 examples where the two disagreed, **hybrid found a faulty
+file on 142 and BM25 on 49**.
 
-Full interpretation, including what these numbers do *not* say, is in
-`docs/03_evaluation.md`.
+**2. The expensive cross-encoder reranker made things significantly worse** —
+−14.0 points of top-1 (z = −9.00) against a shortlist ceiling of 0.947. It had
+7.1 points of headroom and gave back 7.0, landing back at roughly plain BM25's
+level. Diagnosed as domain shift: the model is trained on web-search passages, not
+Python source. This is the most useful finding in the project and it is a
+negative one. See `docs/04_reranking.md`.
+
+**3. It doesn't always work, and the exceptions are coherent.** On requests,
+hybrid fails to beat BM25 — and requests is also the *only* repo where reranking
+helps. Those are the same fact: it's the one slice where fusion had no edge, so
+the reranker had nothing to destroy.
+
+**Whole-repo search — tests included, ~1,204 candidate files per query:**
+
+| method | top-1 | top-5 | top-10 | MRR | MAP |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| BM25 | 0.209 | 0.534 | 0.670 | 0.363 | 0.341 |
+| dense | 0.238 | 0.558 | 0.691 | 0.385 | 0.355 |
+| **hybrid (RRF)** | **0.306** | **0.658** | **0.779** | **0.461** | **0.428** |
+| + cross-encoder rerank | 0.193 | 0.508 | 0.677 | 0.345 | 0.323 |
+
+Excluding test files from the searchable corpus makes the task materially easier
+— worth ~10 points of top-10 and ~13 of top-1 — and it also **changes which
+method wins**. With tests searchable, dense overtakes BM25 (0.691 vs 0.670
+top-10), because a test file restates the bug report in near-identical words and
+is therefore the single best keyword match while never being a correct answer.
+Both scopes are always reported over the same examples.
+
+Two things get *stronger* in the harder scope, in mirror image:
+
+- **Fusion matters more**: hybrid beats BM25 by +0.109 top-10 (z = +9.62, 180 wins
+  to 38), versus +0.048 in the easy scope.
+- **Reranking hurts more**: −0.102 top-10 (z = −8.23) versus −0.070, and it becomes
+  statistically indistinguishable from plain BM25 at every cutoff — erasing the
+  entire fusion advantage.
+
+`docs/03_evaluation.md` covers the metric definitions and the scope argument;
+`docs/04_reranking.md` covers the reranking result in full.
 
 ---
 
@@ -348,3 +371,35 @@ full tree, and extrapolating from it wildly overstates the incremental cost —
 181,148 file instances collapsed to 1,008 blobs, a 179.7x saving that only shows
 up after the cache warms. The cut to 337 examples was therefore more conservative
 than it needed to be.
+
+### Milestone 4 — Reranking, and a larger evaluation
+
+Expanded the held-out evaluation from 337 to **1,308 examples** and added a
+cross-encoder reranker on top of hybrid. Headline numbers are above; full
+treatment in `docs/04_reranking.md`.
+
+**The Milestone 3 hedge was a statistics error, not a sample-size problem.** I had
+described the hybrid gain as "at the edge of what n=337 resolves" — but that came
+from comparing two accuracies as if they were independent samples. They are not:
+every method scores the same bug reports, so examples both get right (or both get
+wrong) carry no information, and all the signal is in the disagreements.
+Switching to **McNemar's paired test** cut the standard error at top-10 from
+0.027 to 0.0088. The gain was always real; I had been measuring it with the wrong
+instrument. The larger sample then made it comfortable rather than merely
+defensible: z = +3.4 to +6.7 throughout.
+
+**Reranking is the milestone's real result, and it is negative.** A cross-encoder
+over the top-25 shortlist cost 14 points of top-1 (z = −9.00) against a ceiling of
+0.947 — 7.1 points of headroom, 7.0 given back. It lands statistically
+indistinguishable from plain BM25 at top-10, which identifies the mechanism: it
+discards the two-retriever consensus that is fusion's entire contribution.
+Diagnosed as domain shift and scoped narrowly to this model on this domain.
+
+**Four performance problems found by running at scale**, each worth more than the
+milestone's code: the first eval run made no progress for 100 minutes because the
+process was paged out (swap at 96%) — fixed by interning tokens (a corpus is
+millions of short strings but a repo's vocabulary is tens of thousands, ~6x memory
+cut) and right-sizing the token cache, which had been sized for the narrow corpus
+while running against a 1,400-file wide one. Results now persist per scope rather
+than after all scopes. And `blob.content` turned out to be dead storage — every
+caller reads from git — worth 104 MB → 1.6 MB.

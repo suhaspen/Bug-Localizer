@@ -659,3 +659,64 @@ containing "20% of" made Python read `% o` as an octal conversion, so
 `SCHEMA % {...}` raised `TypeError` at startup. Any SQL string that mixes
 `%`-formatting with prose is one comment away from breaking; explicit
 substitution cannot be tripped by it.
+
+### D39 — Eval set expanded to 1,308, then deliberately capped
+
+**Decision.** Expand the held-out evaluation from 337 to 1,308 examples (pandas
+1,103 of 2,030, plus all of flask and requests), and stop the index build there
+rather than pursuing full coverage.
+
+**Alternatives.** Full held-out (2,235); stay at 337.
+
+**Why expand.** The Milestone 3 hybrid gain was reported as marginal, and the
+question of whether it firmed up or washed out at larger n was worth answering
+directly rather than arguing about.
+
+**Why stop.** Two independent limits. The wide-scope index was consuming ~6 MB of
+disk per commit against a machine that had been at 98% full, and throughput was
+decaying from 7.5 to under 3 commits/minute as swap pressure grew. Against that,
+the marginal statistical value was near zero: at n=1,308 the paired standard
+error at top-10 is 0.0088, and every comparison of interest was already
+significant at |z| > 3.4. Another 900 examples would have shrunk an error bar
+that was not the binding constraint on any conclusion.
+
+**A process note, recorded because it matters more than the decision.** When the
+cost estimate that justified "expand to the full set" turned out to be off by a
+large factor, the right move was to surface the conflict between the instruction
+and the new facts and re-decide — not to default to the literal original
+instruction because it was the last thing agreed. Deferring to stale instructions
+when the premises have moved is a failure mode worth naming.
+
+### D40 — Interned tokens and a right-sized token cache
+
+**Decision.** `tokenize()` interns its output; `TokenCache` holds 1,536 blobs
+rather than 4,096.
+
+**Why.** The first full-scale eval made *no measurable progress in 100 minutes*.
+The diagnosis came from Postgres, not from the application: the connection sat
+`idle in transaction` waiting on the client for 80 seconds at a time, meaning the
+database was finished and Python was not sending work. The machine was at 96%
+swap and the process was being paged out.
+
+Both fixes attack resident memory. A tokenised corpus is millions of short
+strings, but a repository's vocabulary is only tens of thousands of distinct
+identifiers, so interning collapses duplicates to shared references — roughly a
+6x reduction. And the cache had been sized against the *narrow* corpus (~290
+files per commit); at the wide scope a pandas commit is ~1,400 files, so 4,096
+blobs was holding several hundred MB. 1,536 is one wide tree plus headroom, and
+the measured hit rate stayed at 96–98%.
+
+The general lesson: a cache sized for one workload becomes a liability when the
+workload changes shape, and the symptom is not an error but the absence of
+progress.
+
+### D41 — Results persist per scope, not after all scopes
+
+**Decision.** `bugloc eval` writes each scope's JSON and peek-ledger entry as
+that scope completes.
+
+**Why.** The wide scope takes hours. Under the previous behaviour a process that
+died during it discarded the *completed* narrow-scope run as well — which is
+exactly what happened once, and the numbers survived only because they had been
+rendered to a log that was still on disk. Losing hours of finished computation to
+an unrelated failure in the next stage is avoidable, and the fix is three lines.
