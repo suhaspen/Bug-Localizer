@@ -359,9 +359,9 @@ What the milestone added:
   intersection, the scope delta would have conflated scope with sample.
 - **Composition-first reporting.** Every aggregate is preceded by its per-repo
   makeup, with a warning when any repo exceeds 50%.
-- **A held-out peek ledger** at `results/heldout_log.jsonl`. Three peeks so far,
-  the first a deliberately-retained flask-only smoke test.
-- **128 passing tests.**
+- **A held-out peek ledger**, appended to on every held-out run, so that
+  evaluations against the split are counted rather than casually repeated.
+- **141 passing tests.**
 
 **An estimation lesson worth keeping.** I projected the wide-scope pandas index
 at ~1.6 h, then watched the first commits run at 1/minute and revised to ~5 h,

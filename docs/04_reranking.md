@@ -415,17 +415,16 @@ make eval-rerank
 ```
 
 Adds a fourth `rerank` row at both corpus scopes, reports the shortlist ceiling,
-and appends the run to `results/heldout_log.jsonl`.
+and appends the run to the local held-out peek ledger.
 
 ---
 
 ## Provenance
 
 Both scopes cover the same 1,308 held-out examples. They were produced by two
-separate runs of the same code: the tests-excluded scope on 2026-07-27 (tables
-preserved in `results/logs/m4_eval_run.log` — that run was killed during its
-second scope before it could write JSON, which is why per-scope persistence was
-added), and the tests-included scope on 2026-07-28
+separate runs of the same code: the tests-excluded scope on 2026-07-27 — that run
+was killed during its second scope before it could write JSON, which is why
+per-scope persistence was added — and the tests-included scope on 2026-07-28
 (`results/20260728T052731Z.json`).
 
 A note on partial results, because this milestone produced a good cautionary

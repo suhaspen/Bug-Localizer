@@ -128,8 +128,8 @@ and leave flask barely represented, making per-repo comparison impossible.
 ### The held-out peek ledger
 
 Every held-out evaluation appends a line to `results/heldout_log.jsonl` with a
-timestamp, git SHA, corpus scope and example count. The count is printed before
-each run: *"this will be peek #4"*.
+timestamp, git SHA, corpus scope and example count. The running count is printed
+before each run, so the cost of another look is visible before you take it.
 
 This is not bureaucracy. A held-out set stops being held out the moment you start
 making decisions based on it — and the decisions are rarely explicit. You run the

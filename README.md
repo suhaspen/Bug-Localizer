@@ -12,10 +12,22 @@ asked the same question a developer faced on the day the bug was filed.
 We then evaluate retrieval methods — BM25, dense embeddings, hybrid fusion, and
 cross-encoder reranking — on top-1/5/10 file accuracy, MRR, and MAP.
 
-**Status: Milestone 2.** The dataset exists — **7,445 labeled examples** mined
-from 50,490 commits across flask, requests and pandas in ~13 seconds — and both
-retrievers (BM25 and dense/pgvector) return ranked files. No accuracy numbers
-yet; the eval harness is Milestone 3.
+**Status: Milestone 4 complete.** **7,466 labeled examples** mined from 50,490
+commits across flask, requests and pandas in ~13 seconds; four retrieval methods
+evaluated on a temporal held-out split of 1,308 examples.
+
+| method | top-1 | top-5 | top-10 | MRR | MAP |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| BM25 | 0.394 | 0.723 | 0.828 | 0.539 | 0.509 |
+| dense | 0.325 | 0.689 | 0.819 | 0.487 | 0.455 |
+| **hybrid (RRF)** | **0.437** | **0.794** | **0.876** | **0.593** | **0.557** |
+| + cross-encoder rerank | 0.297 | 0.664 | 0.806 | 0.463 | 0.437 |
+
+**Hybrid fusion wins** — it puts the responsible file in the top 5 for 79% of
+bug reports, and beats both parents by a paired margin that McNemar's test
+resolves comfortably. **Cross-encoder reranking loses**, decisively and
+reproducibly; `docs/04_reranking.md` covers why a passage reranker is the wrong
+instrument for this task rather than burying the result.
 
 ## Quickstart
 
@@ -42,8 +54,8 @@ The `docs/` folder is written to be read on its own, without the code:
 | [`docs/03_evaluation.md`](docs/03_evaluation.md) | Every metric with a worked example, the split rationale, and the results interpreted |
 | [`docs/architecture.md`](docs/architecture.md) | Map of the codebase and how data flows through it |
 | [`docs/decisions.md`](docs/decisions.md) | Every non-obvious choice, with the alternatives rejected |
+| [`docs/04_reranking.md`](docs/04_reranking.md) | Cross-encoder reranking, why it underperforms, and what that rules out |
 | [`docs/glossary.md`](docs/glossary.md) | Plain-language definitions of every domain term |
-| [`docs/interview_qa.md`](docs/interview_qa.md) | The hard questions about this project, with answers |
 
 ## Requirements
 

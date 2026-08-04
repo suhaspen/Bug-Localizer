@@ -25,4 +25,14 @@ config.local.yaml
 .DS_Store
 
 # NOTE: results/ is deliberately NOT ignored. Eval runs are the evidence
-# behind the numbers in the docs, so they get committed.
+# behind the numbers in the docs, so they get committed. The exceptions below
+# are kept locally but not published.
+
+# Raw run logs: progress-bar noise, superseded by the tables in results/*.md
+results/logs/
+
+# Held-out peek ledger: local discipline aid, not part of the published record
+results/heldout_log.jsonl
+
+# Local working notes
+docs/interview_qa.md
